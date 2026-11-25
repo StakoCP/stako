@@ -253,6 +253,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/backups/{id}/download", s.requireAuth(s.handleDownloadBackup))
 	mux.HandleFunc("POST /api/v1/billing/sso", s.requireAuth(s.handleBillingSSO))
 
+	// System Service Config Editor (Admin)
+	mux.HandleFunc("GET /api/v1/system/configs", s.requireAuth(s.handleListSysConfigs))
+	mux.HandleFunc("GET /api/v1/system/configs/{service}", s.requireAuth(s.handleGetSysConfig))
+	mux.HandleFunc("PUT /api/v1/system/configs/{service}", s.requireAuth(s.handleUpdateSysConfig))
+
 	// Audit, Jobs, System
 	mux.HandleFunc("GET /api/v1/audit", s.requireAuth(s.handleListAudit))
 	mux.HandleFunc("GET /api/v1/audit/verify", s.requireAuth(s.handleVerifyAudit))

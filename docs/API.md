@@ -395,3 +395,12 @@ Query `limit` (default 50, maks 200) dan `offset`. Respons: `{ "items": [...], "
 - `POST /nodes` `{ "name", "host", "port"?, "role"?: "worker|db|mail" }` → `201 { "node": ServerNode, "agent_token": "..." }`
 - `DELETE /nodes/{id}` → `204`
 - `POST /import` `{ "source_panel": "hestiacp|cpanel|vestacp", "archive_path" }` → `202 { "job_id": "j_..." }`
+
+
+---
+
+# Stako REST API v1 — System Service Config Editor (Admin Only)
+
+- `GET /system/configs` → `{ "items": [{ "service": "nginx", "label": "Nginx", "path": "/etc/nginx/nginx.conf", "test_cmd": "nginx -t" }] }`
+- `GET /system/configs/{service}` → `{ "service": "nginx", "label": "Nginx", "path": "...", "content": "...", "history": [...] }`
+- `PUT /system/configs/{service}` `{ "content": "...", "comment"?: "..." }` → `200 { "ok": true, "output": "..." }` (wajib reauth; validasi sebelum reload, rollback otomatis bila gagal)

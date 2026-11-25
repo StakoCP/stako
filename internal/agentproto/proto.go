@@ -57,6 +57,8 @@ const (
 	CmdWAFApply        = "waf.apply"
 	CmdGitDeploy       = "git.deploy"
 	CmdPanelImport     = "panel.import"
+	CmdSysConfigRead   = "sysconfig.read"
+	CmdSysConfigApply  = "sysconfig.apply"
 )
 
 type Request struct {

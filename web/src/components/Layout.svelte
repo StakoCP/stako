@@ -157,6 +157,12 @@
       roles: ['admin'],
     },
     {
+      path: '/configs',
+      label: () => i18n.t.nav.configs,
+      activeNames: ['configs'],
+      roles: ['admin'],
+    },
+    {
       path: '/terminal',
       label: () => i18n.t.nav.terminal,
       activeNames: ['terminal'],

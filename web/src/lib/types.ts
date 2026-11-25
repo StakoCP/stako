@@ -539,3 +539,27 @@ export interface ServerNode {
 }
 
 export type ImportSourcePanel = 'hestiacp' | 'cpanel' | 'vestacp';
+
+export interface ServiceConfigMeta {
+  service: string;
+  label: string;
+  path: string;
+  test_cmd: string;
+}
+
+export interface ServiceConfigRevision {
+  id: string;
+  service: string;
+  content: string;
+  comment: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface ServiceConfigDetail {
+  service: string;
+  label: string;
+  path: string;
+  content: string;
+  history: ServiceConfigRevision[];
+}

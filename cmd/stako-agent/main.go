@@ -556,6 +556,57 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		arch, _ := req.Args["archive_path"].(string)
 		return runExec(resp, dryRun, logger, "stako-import", src, arch)
 
+	case agentproto.CmdSysConfigRead:
+		p, _ := req.Args["path"].(string)
+		if dryRun {
+			resp.OK = true
+			return resp
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		resp.OK = true
+		resp.Output = string(b)
+		return resp
+
+	case agentproto.CmdSysConfigApply:
+		p, _ := req.Args["path"].(string)
+		content, _ := req.Args["content"].(string)
+		testCmd, _ := req.Args["test_cmd"].(string)
+		reloadSvc, _ := req.Args["reload_svc"].(string)
+		if dryRun {
+			logger.Info("dry-run sysconfig apply", "path", p, "test", testCmd, "reload", reloadSvc)
+			resp.OK = true
+			resp.Output = "[dry-run] validated (" + testCmd + ") and reloaded " + reloadSvc
+			return resp
+		}
+		bakPath := p + ".stako.bak"
+		if orig, err := os.ReadFile(p); err == nil {
+			_ = os.WriteFile(bakPath, orig, 0o600)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if testCmd != "" {
+			parts := strings.Fields(testCmd)
+			testResp := runExec(resp, false, logger, parts[0], parts[1:]...)
+			if !testResp.OK {
+				// Automatic rollback on validation failure
+				if bak, err := os.ReadFile(bakPath); err == nil {
+					_ = os.WriteFile(p, bak, 0o644)
+				}
+				return testResp
+			}
+		}
+		if reloadSvc != "" {
+			return runExec(resp, false, logger, "systemctl", "reload", reloadSvc)
+		}
+		resp.OK = true
+		return resp
+
 	default:
 		logger.Warn("rejected unknown command", "command", req.Command)
 		resp.Error = "command not in allowlist: " + req.Command

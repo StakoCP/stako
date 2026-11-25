@@ -31,6 +31,7 @@
   import PackagesView from '../views/PackagesView.svelte';
   import SecurityView from '../views/SecurityView.svelte';
   import ServicesView from '../views/ServicesView.svelte';
+  import SystemConfigsView from '../views/SystemConfigsView.svelte';
   import TerminalView from '../views/TerminalView.svelte';
   import UsersView from '../views/UsersView.svelte';
   import WebhooksView from '../views/WebhooksView.svelte';
@@ -108,6 +109,8 @@
       <MonitoringView />
     {:else if router.current.name === 'nodes' && auth.user.role === 'admin'}
       <NodesView />
+    {:else if router.current.name === 'configs' && auth.user.role === 'admin'}
+      <SystemConfigsView />
     {:else if router.current.name === 'terminal' && auth.user.role !== 'readonly'}
       <TerminalView />
     {:else if router.current.name === 'jobs'}

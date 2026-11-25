@@ -172,6 +172,9 @@ func (s *Store) migrate() error {
 	if err := s.migratePhase6(); err != nil {
 		return err
 	}
+	if err := s.migrateSysConfig(); err != nil {
+		return err
+	}
 	return s.seedDefaultPackages()
 }
 

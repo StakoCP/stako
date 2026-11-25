@@ -569,3 +569,51 @@ func TestSecurityIncidentAndBillingSSO(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestSystemConfigEditor(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// List managed configs
+	rec = doReq(t, h, "GET", "/api/v1/system/configs", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("nginx")) || !bytes.Contains(rec.Body.Bytes(), []byte("powerdns")) {
+		t.Fatalf("list sysconfigs = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// PUT without reauth -> 403 reauth-required
+	rec = doReq(t, h, "PUT", "/api/v1/system/configs/nginx", map[string]string{"content": "worker_processes 4;"}, cookies, csrf)
+	if rec.Code != 403 {
+		t.Fatalf("expected 403 without reauth, got %d", rec.Code)
+	}
+
+	// Reauth -> PUT succeeds and saves revision
+	if rec := doReq(t, h, "POST", "/api/v1/auth/reauth", map[string]string{"password": "Admin-Strong-Password-123"}, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("reauth = %d", rec.Code)
+	}
+	rec = doReq(t, h, "PUT", "/api/v1/system/configs/nginx", map[string]string{"content": "worker_processes 4;", "comment": "tune workers"}, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("update sysconfig = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// GET returns updated content and history
+	rec = doReq(t, h, "GET", "/api/v1/system/configs/nginx", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("worker_processes 4;")) {
+		t.Fatalf("get sysconfig = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}
