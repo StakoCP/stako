@@ -23,173 +23,220 @@
     roles: UserRole[];
   }
 
-  const navItems: NavItem[] = [
+  interface NavGroup {
+    id: string;
+    label: () => string;
+    items: NavItem[];
+  }
+
+  const navGroups: NavGroup[] = [
     {
-      path: '/dashboard',
-      label: () => i18n.t.nav.dashboard,
-      activeNames: ['dashboard'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
+      id: 'overview',
+      label: () => i18n.t.navGroups.overview,
+      items: [
+        {
+          path: '/dashboard',
+          label: () => i18n.t.nav.dashboard,
+          activeNames: ['dashboard'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+      ],
     },
     {
-      path: '/users',
-      label: () => i18n.t.nav.users,
-      activeNames: ['users'],
-      roles: ['admin', 'reseller'],
+      id: 'usersAccess',
+      label: () => i18n.t.navGroups.usersAccess,
+      items: [
+        {
+          path: '/users',
+          label: () => i18n.t.nav.users,
+          activeNames: ['users'],
+          roles: ['admin', 'reseller'],
+        },
+        {
+          path: '/packages',
+          label: () => i18n.t.nav.packages,
+          activeNames: ['packages'],
+          roles: ['admin', 'reseller'],
+        },
+        {
+          path: '/account',
+          label: () => i18n.t.nav.account,
+          activeNames: ['account'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+      ],
     },
     {
-      path: '/packages',
-      label: () => i18n.t.nav.packages,
-      activeNames: ['packages'],
-      roles: ['admin', 'reseller'],
+      id: 'webApps',
+      label: () => i18n.t.navGroups.webApps,
+      items: [
+        {
+          path: '/domains',
+          label: () => i18n.t.nav.domains,
+          activeNames: ['domains'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/dns',
+          label: () => i18n.t.nav.dns,
+          activeNames: ['dns'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/apps',
+          label: () => i18n.t.nav.apps,
+          activeNames: ['apps'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/git-deploy',
+          label: () => i18n.t.nav.gitDeploy,
+          activeNames: ['git-deploy'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/docker',
+          label: () => i18n.t.nav.docker,
+          activeNames: ['docker'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/catalog',
+          label: () => i18n.t.nav.catalog,
+          activeNames: ['catalog'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+      ],
     },
     {
-      path: '/domains',
-      label: () => i18n.t.nav.domains,
-      activeNames: ['domains'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
+      id: 'dataMail',
+      label: () => i18n.t.navGroups.dataMail,
+      items: [
+        {
+          path: '/databases',
+          label: () => i18n.t.nav.databases,
+          activeNames: ['databases'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/services',
+          label: () => i18n.t.nav.services,
+          activeNames: ['services'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/ftp',
+          label: () => i18n.t.nav.ftp,
+          activeNames: ['ftp'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/files',
+          label: () => i18n.t.nav.files,
+          activeNames: ['files'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/mail',
+          label: () => i18n.t.nav.mail,
+          activeNames: ['mail'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/cron',
+          label: () => i18n.t.nav.cron,
+          activeNames: ['cron'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
+          path: '/backups',
+          label: () => i18n.t.nav.backups,
+          activeNames: ['backups'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+      ],
     },
     {
-      path: '/dns',
-      label: () => i18n.t.nav.dns,
-      activeNames: ['dns'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
+      id: 'networkSecurity',
+      label: () => i18n.t.navGroups.networkSecurity,
+      items: [
+        {
+          path: '/ips',
+          label: () => i18n.t.nav.ips,
+          activeNames: ['ips'],
+          roles: ['admin', 'reseller'],
+        },
+        {
+          path: '/firewall',
+          label: () => i18n.t.nav.firewall,
+          activeNames: ['firewall'],
+          roles: ['admin'],
+        },
+        {
+          path: '/security',
+          label: () => i18n.t.nav.security,
+          activeNames: ['security'],
+          roles: ['admin'],
+        },
+        {
+          path: '/audit',
+          label: () => i18n.t.nav.audit,
+          activeNames: ['audit'],
+          roles: ['admin'],
+        },
+      ],
     },
     {
-      path: '/apps',
-      label: () => i18n.t.nav.apps,
-      activeNames: ['apps'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/git-deploy',
-      label: () => i18n.t.nav.gitDeploy,
-      activeNames: ['git-deploy'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/docker',
-      label: () => i18n.t.nav.docker,
-      activeNames: ['docker'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/catalog',
-      label: () => i18n.t.nav.catalog,
-      activeNames: ['catalog'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/databases',
-      label: () => i18n.t.nav.databases,
-      activeNames: ['databases'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/services',
-      label: () => i18n.t.nav.services,
-      activeNames: ['services'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/ftp',
-      label: () => i18n.t.nav.ftp,
-      activeNames: ['ftp'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/files',
-      label: () => i18n.t.nav.files,
-      activeNames: ['files'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/cron',
-      label: () => i18n.t.nav.cron,
-      activeNames: ['cron'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/mail',
-      label: () => i18n.t.nav.mail,
-      activeNames: ['mail'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/backups',
-      label: () => i18n.t.nav.backups,
-      activeNames: ['backups'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/webhooks',
-      label: () => i18n.t.nav.webhooks,
-      activeNames: ['webhooks'],
-      roles: ['admin', 'reseller'],
-    },
-    {
-      path: '/ips',
-      label: () => i18n.t.nav.ips,
-      activeNames: ['ips'],
-      roles: ['admin', 'reseller'],
-    },
-    {
-      path: '/firewall',
-      label: () => i18n.t.nav.firewall,
-      activeNames: ['firewall'],
-      roles: ['admin'],
-    },
-    {
-      path: '/security',
-      label: () => i18n.t.nav.security,
-      activeNames: ['security'],
-      roles: ['admin'],
-    },
-    {
-      path: '/monitoring',
-      label: () => i18n.t.nav.monitoring,
-      activeNames: ['monitoring'],
-      roles: ['admin'],
-    },
-    {
-      path: '/nodes',
-      label: () => i18n.t.nav.nodes,
-      activeNames: ['nodes'],
-      roles: ['admin'],
-    },
-    {
-      path: '/configs',
-      label: () => i18n.t.nav.configs,
-      activeNames: ['configs'],
-      roles: ['admin'],
-    },
-    {
-      path: '/terminal',
-      label: () => i18n.t.nav.terminal,
-      activeNames: ['terminal'],
-      roles: ['admin', 'reseller', 'user'],
-    },
-    {
-      path: '/jobs',
-      label: () => i18n.t.nav.jobs,
-      activeNames: ['jobs', 'job-detail'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
-    },
-    {
-      path: '/audit',
-      label: () => i18n.t.nav.audit,
-      activeNames: ['audit'],
-      roles: ['admin'],
-    },
-    {
-      path: '/account',
-      label: () => i18n.t.nav.account,
-      activeNames: ['account'],
-      roles: ['admin', 'reseller', 'user', 'readonly'],
+      id: 'systemOps',
+      label: () => i18n.t.navGroups.systemOps,
+      items: [
+        {
+          path: '/monitoring',
+          label: () => i18n.t.nav.monitoring,
+          activeNames: ['monitoring'],
+          roles: ['admin'],
+        },
+        {
+          path: '/nodes',
+          label: () => i18n.t.nav.nodes,
+          activeNames: ['nodes'],
+          roles: ['admin'],
+        },
+        {
+          path: '/configs',
+          label: () => i18n.t.nav.configs,
+          activeNames: ['configs'],
+          roles: ['admin'],
+        },
+        {
+          path: '/terminal',
+          label: () => i18n.t.nav.terminal,
+          activeNames: ['terminal'],
+          roles: ['admin', 'reseller', 'user'],
+        },
+        {
+          path: '/webhooks',
+          label: () => i18n.t.nav.webhooks,
+          activeNames: ['webhooks'],
+          roles: ['admin', 'reseller'],
+        },
+        {
+          path: '/jobs',
+          label: () => i18n.t.nav.jobs,
+          activeNames: ['jobs', 'job-detail'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+      ],
     },
   ];
 
-  let visibleNav = $derived(
-    navItems.filter((item) => auth.user && item.roles.includes(auth.user.role))
+  let visibleGroups = $derived(
+    navGroups
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((item) => auth.user && item.roles.includes(auth.user.role)),
+      }))
+      .filter((g) => g.items.length > 0)
   );
 
   function closeMobile() {
@@ -226,15 +273,20 @@
       <span>{i18n.t.appName}</span>
     </div>
     <nav class="sidebar-nav">
-      {#each visibleNav as item (item.path)}
-        <a
-          href={`#${item.path}`}
-          class="nav-link"
-          class:active={item.activeNames.includes(router.current.name)}
-          onclick={closeMobile}
-        >
-          <span>{item.label()}</span>
-        </a>
+      {#each visibleGroups as group (group.id)}
+        <div class="nav-group" role="group" aria-label={group.label()}>
+          <div class="nav-group-label">{group.label()}</div>
+          {#each group.items as item (item.path)}
+            <a
+              href={`#${item.path}`}
+              class="nav-link"
+              class:active={item.activeNames.includes(router.current.name)}
+              onclick={closeMobile}
+            >
+              <span>{item.label()}</span>
+            </a>
+          {/each}
+        </div>
       {/each}
     </nav>
   </aside>

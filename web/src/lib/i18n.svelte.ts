@@ -66,6 +66,14 @@ const dict = {
       audit: 'Log Audit',
       account: 'Akun',
     },
+    navGroups: {
+      overview: 'Utama',
+      usersAccess: 'Pengguna & Akses',
+      webApps: 'Web & Aplikasi',
+      dataMail: 'Data, File & Email',
+      networkSecurity: 'Jaringan & Keamanan',
+      systemOps: 'Sistem & Otomasi',
+    },
     impersonation: {
       banner: 'Anda masuk sebagai {username} ({role})',
       exit: 'Kembali ke akun saya',
@@ -935,6 +943,14 @@ const dict = {
       jobs: 'Jobs',
       audit: 'Audit Log',
       account: 'Account',
+    },
+    navGroups: {
+      overview: 'Overview',
+      usersAccess: 'Users & Access',
+      webApps: 'Web & Apps',
+      dataMail: 'Data, Files & Mail',
+      networkSecurity: 'Network & Security',
+      systemOps: 'System & Automation',
     },
     impersonation: {
       banner: 'Signed in as {username} ({role})',
