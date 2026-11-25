@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/StakoCP/stako/internal/agentproto"
 	"github.com/StakoCP/stako/internal/version"
@@ -278,6 +281,8 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			resp.Error = err.Error()
 			return resp
 		}
+		hasPublicV4 := false
+		seen := map[string]bool{}
 		ips := []map[string]any{}
 		for _, iface := range ifaces {
 			addrs, err := iface.Addrs()
@@ -289,16 +294,38 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 				if !ok || ipNet.IP == nil || ipNet.IP.IsLinkLocalUnicast() || ipNet.IP.IsLinkLocalMulticast() {
 					continue
 				}
+				ipStr := ipNet.IP.String()
+				seen[ipStr] = true
 				fam := "ipv6"
 				if ipNet.IP.To4() != nil {
 					fam = "ipv4"
+					if !ipNet.IP.IsLoopback() && !ipNet.IP.IsPrivate() {
+						hasPublicV4 = true
+					}
 				}
 				ips = append(ips, map[string]any{
-					"ip":        ipNet.IP.String(),
+					"ip":        ipStr,
 					"family":    fam,
 					"interface": iface.Name,
 				})
 			}
+		}
+		// On cloud VPS behind 1:1 NAT (AWS/GCP/Alibaba/etc.), detect public egress IP if not directly on NIC.
+		if !hasPublicV4 {
+			if pub := detectPublicIP("https://api.ipify.org"); pub != "" && !seen[pub] {
+				ips = append(ips, map[string]any{
+					"ip":        pub,
+					"family":    "ipv4",
+					"interface": "wan-nat",
+				})
+			}
+		}
+		if pub6 := detectPublicIP("https://api6.ipify.org"); pub6 != "" && !seen[pub6] {
+			ips = append(ips, map[string]any{
+				"ip":        pub6,
+				"family":    "ipv6",
+				"interface": "wan-nat",
+			})
 		}
 		resp.OK = true
 		resp.Data = map[string]any{"ips": ips}
@@ -754,4 +781,25 @@ func runExec(resp agentproto.Response, dryRun bool, logger *slog.Logger, bin str
 	}
 	resp.OK = true
 	return resp
+}
+
+func detectPublicIP(endpoint string) string {
+	c := &http.Client{Timeout: 2 * time.Second}
+	resp, err := c.Get(endpoint)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return ""
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 128))
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(b))
+	if net.ParseIP(s) == nil {
+		return ""
+	}
+	return s
 }

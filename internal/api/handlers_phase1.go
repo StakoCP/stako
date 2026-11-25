@@ -201,7 +201,7 @@ func (s *Server) handleSyncIPs(w http.ResponseWriter, r *http.Request) {
 			}
 			id, _ := crypto.RandomID("ip")
 			vis := "public"
-			if ipStr == "127.0.0.1" || ipStr == "::1" {
+			if parsed := net.ParseIP(ipStr); parsed != nil && (parsed.IsLoopback() || parsed.IsPrivate()) {
 				vis = "internal"
 			}
 			if err := s.store.CreateIP(r.Context(), &store.IPAddress{
