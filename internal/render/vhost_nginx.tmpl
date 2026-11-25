@@ -49,8 +49,8 @@ server {
     root {{ .Docroot }};
     index index.php index.html;
 
-    access_log /var/log/nginx/{{ .Domain }}.access.log;
-    error_log  /var/log/nginx/{{ .Domain }}.error.log;
+    access_log /home/{{ .Username }}/web/{{ .Domain }}/logs/access.log;
+    error_log  /home/{{ .Username }}/web/{{ .Domain }}/logs/error.log;
 
     {{- range .ProxyRules }}
     location {{ .Path }} {

@@ -205,6 +205,11 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 				ensureDocrootPermissions(username, docroot)
 			}
 		}
+		if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			logsDir := fmt.Sprintf("/home/%s/web/%s/logs", username, domain)
+			_ = os.MkdirAll(logsDir, 0o750)
+			ensureDocrootPermissions(username, logsDir)
+		}
 		if tmpl != "proxy" && tmpl != "spa" && tmpl != "static" && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
 			ensurePHPFpmPool(username, phpVer, logger)
 		}
