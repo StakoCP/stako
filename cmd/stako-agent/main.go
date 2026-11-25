@@ -189,6 +189,8 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		domain, _ := req.Args["domain"].(string)
 		username, _ := req.Args["username"].(string)
 		docroot, _ := req.Args["docroot"].(string)
+		tmpl, _ := req.Args["template"].(string)
+		phpVer, _ := req.Args["php_version"].(string)
 		conf, _ := req.Args["nginx_conf"].(string)
 		if err := agentproto.ValidateDomain(domain); err != nil {
 			resp.Error = err.Error()
@@ -202,6 +204,9 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
 				ensureDocrootPermissions(username, docroot)
 			}
+		}
+		if tmpl != "proxy" && tmpl != "spa" && tmpl != "static" && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			ensurePHPFpmPool(username, phpVer, logger)
 		}
 		_ = os.MkdirAll("/var/www/acme", 0o755)
 		confPath := "/etc/nginx/sites-enabled/" + domain + ".conf"
@@ -883,4 +888,64 @@ func ensureDocrootPermissions(username, docroot string) {
 		_ = os.Chmod(cur, 0o750)
 	}
 	_ = exec.Command("chown", "-R", username+":www-data", clean).Run()
+}
+
+func isValidPHPVersion(v string) bool {
+	if len(v) < 3 || len(v) > 5 {
+		return false
+	}
+	dot := strings.IndexByte(v, '.')
+	if dot <= 0 || dot == len(v)-1 {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if i == dot {
+			continue
+		}
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func ensurePHPFpmPool(username, phpVer string, logger *slog.Logger) {
+	if !isValidPHPVersion(phpVer) {
+		return
+	}
+	poolDir := fmt.Sprintf("/etc/php/%s/fpm/pool.d", phpVer)
+	st, err := os.Stat(poolDir)
+	if err != nil || !st.IsDir() {
+		return
+	}
+	poolPath := filepath.Join(poolDir, username+".conf")
+	poolConf := fmt.Sprintf(`; Managed by Stako. Do not edit manually.
+[%s]
+user = %s
+group = %s
+listen = /run/php/php%s-fpm-%s.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+pm = dynamic
+pm.max_children = 10
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 4
+chdir = /home/%s
+`, username, username, username, phpVer, username, username)
+	if existing, err := os.ReadFile(poolPath); err == nil && string(existing) == poolConf {
+		// Ensure socket exists; reload-or-restart only if missing
+		sockPath := fmt.Sprintf("/run/php/php%s-fpm-%s.sock", phpVer, username)
+		if _, err := os.Stat(sockPath); err == nil {
+			return
+		}
+	}
+	if err := os.WriteFile(poolPath, []byte(poolConf), 0o644); err != nil {
+		logger.Warn("failed to write php-fpm pool", "path", poolPath, "err", err)
+		return
+	}
+	if out, err := exec.Command("systemctl", "reload-or-restart", "php"+phpVer+"-fpm").CombinedOutput(); err != nil {
+		logger.Warn("failed to reload php-fpm", "unit", "php"+phpVer+"-fpm", "err", err, "output", strings.TrimSpace(string(out)))
+	}
 }

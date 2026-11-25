@@ -286,7 +286,12 @@ func (s *Server) enqueueDomainApply(r *http.Request, actorID string, d *store.Do
 		ListenIPv4: v4, ListenIPv6: v6, ProxyTarget: d.ProxyTarget, ProxyRules: ruleData,
 	})
 	if j, err := s.jobs.Enqueue(r.Context(), "domain.apply", actorID, map[string]any{
-		"domain": d.Domain, "username": owner.Username, "docroot": d.Docroot, "nginx_conf": conf,
+		"domain":      d.Domain,
+		"username":    owner.Username,
+		"docroot":     d.Docroot,
+		"template":    d.Template,
+		"php_version": d.PHPVersion,
+		"nginx_conf":  conf,
 	}); err == nil {
 		return &j.ID
 	}
