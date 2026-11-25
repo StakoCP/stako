@@ -17,14 +17,18 @@
   let uninstallTarget = $state<SystemService | null>(null);
   let uninstalling = $state(false);
 
+  function isServiceActive(svc: SystemService): boolean {
+    return svc.active === 'active';
+  }
+
   let totalCount = $derived(services.length);
   let installedCount = $derived(services.filter((s) => s.installed).length);
-  let runningCount = $derived(services.filter((s) => s.installed && s.active).length);
+  let runningCount = $derived(services.filter((s) => s.installed && isServiceActive(s)).length);
   let notInstalledCount = $derived(services.filter((s) => !s.installed).length);
 
   let filteredServices = $derived.by(() => {
     if (activeFilter === 'installed') return services.filter((s) => s.installed);
-    if (activeFilter === 'running') return services.filter((s) => s.installed && s.active);
+    if (activeFilter === 'running') return services.filter((s) => s.installed && isServiceActive(s));
     if (activeFilter === 'not-installed') return services.filter((s) => !s.installed);
     return services;
   });
@@ -240,7 +244,7 @@
                 <div class="table-actions">
                   {#if !svc.installed}
                     <span class="badge">{i18n.t.sysServices.statusNotInstalled}</span>
-                  {:else if svc.active}
+                  {:else if isServiceActive(svc)}
                     <span class="badge badge-success">{i18n.t.sysServices.statusActive}</span>
                   {:else}
                     <span class="badge badge-warning">{i18n.t.sysServices.statusInactive}</span>
@@ -253,7 +257,7 @@
               <td>
                 <div class="table-actions">
                   {#if svc.installed}
-                    {#if !svc.active}
+                    {#if !isServiceActive(svc)}
                       <button
                         type="button"
                         class="btn btn-sm btn-primary"

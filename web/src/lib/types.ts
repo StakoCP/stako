@@ -595,6 +595,6 @@ export interface SystemService {
   protected: boolean;
   installed: boolean;
   version: string;
-  active: boolean;
+  active: 'active' | 'inactive' | 'failed' | 'not-installed' | string;
   enabled: boolean;
 }
