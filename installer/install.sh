@@ -8,6 +8,7 @@ set -euo pipefail
 
 PRESET="standard"
 DRY_RUN=0
+UPDATE_ONLY=0
 SKIP_UPGRADE=0
 VERSION="latest"
 REPO="StakoCP/stako"
@@ -27,6 +28,7 @@ Usage: $0 [options]
   --preset basic|standard|full   Service profile (default: standard)
   --version TAG                  Stako release tag (default: latest)
   --from-dir PATH                Install Stako binaries from local directory instead of GitHub
+  --update                       In-place update of Stako binaries only (preserves DB, keys, and sites)
   --with-dns                     Install PowerDNS server (default: off)
   --skip-upgrade                 Skip 'apt-get upgrade'
   --dry-run                      Print reconciliation plan without making changes
@@ -39,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --preset) PRESET="${2:?}"; shift 2 ;;
     --version) VERSION="${2:?}"; shift 2 ;;
     --from-dir) FROM_DIR="${2:?}"; shift 2 ;;
+    --update) UPDATE_ONLY=1; shift ;;
     --with-dns) WITH_DNS="yes"; shift ;;
     --skip-upgrade) SKIP_UPGRADE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -333,7 +336,23 @@ main() {
     exec > >(tee -a "$LOG_FILE") 2>&1
   fi
 
-  log "Stako Smart Installer starting (preset=$PRESET, version=$VERSION, arch=$ARCH, dns=$WITH_DNS)"
+  log "Stako Smart Installer starting (preset=$PRESET, version=$VERSION, arch=$ARCH, update_only=$UPDATE_ONLY)"
+
+  if [[ "$UPDATE_ONLY" -eq 1 ]]; then
+    log "Running in-place Stako update (preserving /var/lib/stako, /etc/stako, and user data)..."
+    if [[ "$DRY_RUN" -eq 0 ]]; then
+      local bk_dir="/var/backups/stako/pre-update-$(date -u +%Y%m%d%H%M%S)"
+      mkdir -p "$bk_dir"
+      cp -a /usr/local/bin/stako* "$bk_dir/" 2>/dev/null || true
+      cp -a /var/lib/stako/stako.db "$bk_dir/" 2>/dev/null || true
+    fi
+    install_stako_binaries
+    run_cmd systemctl daemon-reload
+    run_cmd systemctl restart stako-agent stako-core
+    log "Stako updated in-place successfully!"
+    return 0
+  fi
+
   run_cmd apt-get update -y
   if [[ "$SKIP_UPGRADE" -eq 0 ]]; then
     run_cmd DEBIAN_FRONTEND=noninteractive apt-get upgrade -y

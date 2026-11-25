@@ -118,6 +118,14 @@ func main() {
 		} else {
 			usage()
 		}
+	case "update":
+		if len(args) >= 2 && args[1] == "check" {
+			c.print("GET", "/api/v1/system/update", nil)
+		} else if len(args) >= 2 && args[1] == "apply" {
+			c.print("POST", "/api/v1/system/update", map[string]any{"version": "latest"})
+		} else {
+			usage()
+		}
 	case "docker":
 		if len(args) >= 2 && args[1] == "list" {
 			c.print("GET", "/api/v1/docker/containers", nil)

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
+  import { auth } from '../lib/auth.svelte';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
   import type {
@@ -12,11 +13,18 @@
     SecurityFindingStatus,
     SecurityFindingsResponse,
     SecuritySeverity,
+    SystemUpdateInfo,
     UpdatesResponse,
     WafConfig,
     WafEngine,
     WafMode,
   } from '../lib/types';
+
+  let isAdmin = $derived(auth.user?.role === 'admin');
+
+  let panelUpdate = $state<SystemUpdateInfo | null>(null);
+  let loadingPanelUpdate = $state(false);
+  let updatingPanel = $state(false);
 
   let lockdownEnabled = $state(false);
   let lockdownAllowedIpsText = $state('');
@@ -209,11 +217,39 @@
   }
 
   onMount(() => {
+    if (isAdmin) {
+      loadPanelUpdate();
+    }
     loadLockdown();
     loadWaf();
     loadFindings();
     loadUpdates();
   });
+
+  async function loadPanelUpdate() {
+    loadingPanelUpdate = true;
+    try {
+      panelUpdate = await api.get<SystemUpdateInfo>('/system/update');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      loadingPanelUpdate = false;
+    }
+  }
+
+  async function applyPanelUpdate() {
+    updatingPanel = true;
+    try {
+      const res = await api.post<{ job_id: string }>('/system/update', {
+        version: 'latest',
+      });
+      notifyJob(i18n.t.security.panelUpdateStarted, res.job_id);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      updatingPanel = false;
+    }
+  }
 
   async function runScan() {
     scanning = true;
@@ -270,6 +306,70 @@
     <p class="page-subtitle">{i18n.t.security.subtitle}</p>
   </div>
 </div>
+
+{#if isAdmin}
+  <div class="card">
+    <div class="toolbar">
+      <div>
+        <h2 class="card-title">{i18n.t.security.panelUpdateTitle}</h2>
+        <p class="page-subtitle">{i18n.t.security.panelUpdateSubtitle}</p>
+      </div>
+      {#if panelUpdate}
+        <span class="badge {panelUpdate.update_available ? 'badge-warning' : 'badge-success'}">
+          {panelUpdate.update_available ? i18n.t.security.updateAvailable : i18n.t.security.upToDate}
+        </span>
+      {/if}
+    </div>
+
+    <div class="grid-two">
+      <div class="form-group">
+        <div class="stat-label">{i18n.t.security.currentVersion}</div>
+        <div class="stat-value mono">
+          {panelUpdate ? panelUpdate.current_version : loadingPanelUpdate ? i18n.t.common.loading : '—'}
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="stat-label">{i18n.t.security.latestVersion}</div>
+        <div class="stat-value mono">
+          {panelUpdate ? panelUpdate.latest_version : loadingPanelUpdate ? i18n.t.common.loading : '—'}
+        </div>
+      </div>
+    </div>
+
+    <div class="alert alert-info" role="note">
+      {i18n.t.security.panelUpdatePreserveNote}
+    </div>
+
+    <div class="table-actions">
+      <button
+        type="button"
+        class="btn btn-primary"
+        onclick={applyPanelUpdate}
+        disabled={loadingPanelUpdate || updatingPanel || !panelUpdate?.update_available}
+      >
+        {updatingPanel ? i18n.t.security.updatingPanel : i18n.t.security.updateInPlace}
+      </button>
+      <button
+        type="button"
+        class="btn"
+        onclick={loadPanelUpdate}
+        disabled={loadingPanelUpdate || updatingPanel}
+      >
+        {loadingPanelUpdate ? i18n.t.security.checkingUpdates : i18n.t.security.checkForUpdates}
+      </button>
+      {#if panelUpdate?.release_url}
+        <a
+          class="btn btn-ghost"
+          href={panelUpdate.release_url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {i18n.t.security.releaseNotes}
+        </a>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <div class="card">
   <div class="toolbar">

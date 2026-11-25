@@ -563,3 +563,10 @@ export interface ServiceConfigDetail {
   content: string;
   history: ServiceConfigRevision[];
 }
+
+export interface SystemUpdateInfo {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_url?: string | null;
+}

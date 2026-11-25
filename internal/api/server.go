@@ -258,6 +258,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/configs/{service}", s.requireAuth(s.handleGetSysConfig))
 	mux.HandleFunc("PUT /api/v1/system/configs/{service}", s.requireAuth(s.handleUpdateSysConfig))
 
+	// Stako Panel Self-Update (7.18 FR-UP6, Admin)
+	mux.HandleFunc("GET /api/v1/system/update", s.requireAuth(s.handleCheckPanelUpdate))
+	mux.HandleFunc("POST /api/v1/system/update", s.requireAuth(s.handleApplyPanelUpdate))
+
 	// Audit, Jobs, System
 	mux.HandleFunc("GET /api/v1/audit", s.requireAuth(s.handleListAudit))
 	mux.HandleFunc("GET /api/v1/audit/verify", s.requireAuth(s.handleVerifyAudit))

@@ -59,6 +59,7 @@ const (
 	CmdPanelImport     = "panel.import"
 	CmdSysConfigRead   = "sysconfig.read"
 	CmdSysConfigApply  = "sysconfig.apply"
+	CmdPanelUpdate     = "panel.update"
 )
 
 type Request struct {

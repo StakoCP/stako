@@ -167,3 +167,25 @@ Jika Anda sudah melakukan *cross-compile* dari mesin pengembangan (`dist/stako-*
 | Lokasi database state & master key | `/var/lib/stako/stako.db` & `/etc/stako/keys/master.key` *(backup berkala!)* |
 
 > **Penting:** Segera simpan cadangan `/etc/stako/keys/master.key` di tempat aman di luar server. Tanpa kunci ini, arsip backup terenkripsi, secret environment aplikasi, dan secret 2FA tidak dapat didekripsi saat pemulihan bencana.
+
+
+---
+
+## 8. Memperbarui (Update) Stako Tanpa Menghapus Instalasi
+
+Untuk memperbarui Stako ke rilis terbaru **tanpa menghapus database, master key, sertifikat, maupun situs yang sudah ada**:
+
+### Melalui Dashboard Web
+1. Masuk sebagai `admin` → buka menu **Keamanan & Pembaruan** (`#/security`).
+2. Pada kartu **Pembaruan Panel Stako**, klik **Periksa Pembaruan** lalu **Perbarui Stako (In-Place)**.
+3. Panel otomatis membuat backup database/konfigurasi terlebih dahulu, mengunduh binary terbaru yang terverifikasi `SHA256SUMS`, lalu me-restart `stako-agent` dan `stako-core`.
+
+### Melalui CLI / Terminal VPS
+```bash
+# Menggunakan skrip installer mode --update
+curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh
+sudo bash install.sh --update
+
+# Atau dari folder dist/ lokal:
+sudo bash install.sh --update --from-dir ./dist
+```

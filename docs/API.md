@@ -404,3 +404,7 @@ Query `limit` (default 50, maks 200) dan `offset`. Respons: `{ "items": [...], "
 - `GET /system/configs` → `{ "items": [{ "service": "nginx", "label": "Nginx", "path": "/etc/nginx/nginx.conf", "test_cmd": "nginx -t" }] }`
 - `GET /system/configs/{service}` → `{ "service": "nginx", "label": "Nginx", "path": "...", "content": "...", "history": [...] }`
 - `PUT /system/configs/{service}` `{ "content": "...", "comment"?: "..." }` → `200 { "ok": true, "output": "..." }` (wajib reauth; validasi sebelum reload, rollback otomatis bila gagal)
+
+## Update Stako In-Place (`7.18 FR-UP6`, admin)
+- `GET /system/update` → `{ "current_version": "0.1.0", "latest_version": "v0.1.0", "update_available": false, "release_url": "..." }`
+- `POST /system/update` `{ "version"?: "latest", "channel"?: "stable"|"beta" }` → `202 { "job_id": "j_...", "backup_id": "bk_..." }` (wajib reauth; membuat backup otomatis sebelum update)

@@ -617,3 +617,39 @@ func TestSystemConfigEditor(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestPanelSelfUpdate(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Apply update without reauth -> 403
+	rec = doReq(t, h, "POST", "/api/v1/system/update", map[string]string{"version": "latest"}, cookies, csrf)
+	if rec.Code != 403 {
+		t.Fatalf("expected 403 without reauth, got %d", rec.Code)
+	}
+
+	// Reauth -> apply update returns 202 with job_id and pre-update backup_id
+	if rec := doReq(t, h, "POST", "/api/v1/auth/reauth", map[string]string{"password": "Admin-Strong-Password-123"}, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("reauth = %d", rec.Code)
+	}
+	rec = doReq(t, h, "POST", "/api/v1/system/update", map[string]string{"version": "latest"}, cookies, csrf)
+	if rec.Code != 202 || !bytes.Contains(rec.Body.Bytes(), []byte("backup_id")) {
+		t.Fatalf("apply update = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

@@ -607,6 +607,16 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		resp.OK = true
 		return resp
 
+	case agentproto.CmdPanelUpdate:
+		ver, _ := req.Args["version"].(string)
+		if ver == "" {
+			ver = "latest"
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "bash", "/usr/local/share/stako/install.sh", "--update", "--version", ver)
+		}
+		return runExec(resp, false, logger, "bash", "-c", "curl -fsSL https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh | bash -s -- --update --version "+ver)
+
 	default:
 		logger.Warn("rejected unknown command", "command", req.Command)
 		resp.Error = "command not in allowlist: " + req.Command

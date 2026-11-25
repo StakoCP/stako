@@ -160,6 +160,8 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdGitDeploy
 	case "panel.import":
 		cmd = agentproto.CmdPanelImport
+	case "panel.update":
+		cmd = agentproto.CmdPanelUpdate
 	default:
 		errMsg := "unknown job type: " + j.Type
 		logf("error: %s", errMsg)
