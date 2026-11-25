@@ -144,7 +144,13 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		if shell == "" {
 			shell = "/usr/sbin/nologin"
 		}
-		return runExec(resp, dryRun, logger, "useradd", "-m", "-s", shell, username)
+		r := runExec(resp, dryRun, logger, "useradd", "-m", "-s", shell, username)
+		if r.OK && !dryRun {
+			homeDir := "/home/" + username
+			_ = exec.Command("chown", username+":www-data", homeDir).Run()
+			_ = os.Chmod(homeDir, 0o710)
+		}
+		return r
 
 	case agentproto.CmdUserDelete:
 		username, _ := req.Args["username"].(string)
@@ -194,7 +200,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		if docroot != "" {
 			_ = os.MkdirAll(docroot, 0o750)
 			if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
-				_ = exec.Command("chown", "-R", username+":www-data", filepath.Dir(docroot)).Run()
+				ensureDocrootPermissions(username, docroot)
 			}
 		}
 		_ = os.MkdirAll("/var/www/acme", 0o755)
@@ -864,4 +870,17 @@ func detectPublicIP(endpoint string) string {
 		return ""
 	}
 	return s
+}
+
+func ensureDocrootPermissions(username, docroot string) {
+	homeDir := "/home/" + username
+	_ = exec.Command("chown", username+":www-data", homeDir).Run()
+	_ = os.Chmod(homeDir, 0o710)
+
+	clean := filepath.Clean(docroot)
+	for cur := clean; cur != homeDir && strings.HasPrefix(cur, homeDir+"/"); cur = filepath.Dir(cur) {
+		_ = exec.Command("chown", username+":www-data", cur).Run()
+		_ = os.Chmod(cur, 0o750)
+	}
+	_ = exec.Command("chown", "-R", username+":www-data", clean).Run()
 }
