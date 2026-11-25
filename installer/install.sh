@@ -256,26 +256,18 @@ install_stako_binaries() {
     fi
   fi
 
-  log "No GitHub Release found for '$STAKO_VERSION'; falling back to building from source (main branch)..."
-  apt_install_retry git
+  log "Building Stako from source (main branch)..."
+  apt_install_retry git golang-go
   if ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt_install_retry nodejs
   fi
-  local go_bin
-  go_bin="$(command -v go || true)"
-  if [[ -z "$go_bin" ]] || ! "$go_bin" version | grep -qE "go1\.(2[5-9]|[3-9][0-9])"; then
-    log "Installing Go 1.25.5 toolchain for source build..."
-    curl -fsSL "https://go.dev/dl/go1.25.5.linux-$ARCH.tar.gz" -o "$tmp/go.tar.gz"
-    tar -C "$tmp" -xzf "$tmp/go.tar.gz"
-    export PATH="$tmp/go/bin:$PATH"
-  fi
 
   git clone --depth 1 "https://github.com/$REPO.git" "$tmp/src"
   (cd "$tmp/src/web" && npm ci && npm run build)
-  (cd "$tmp/src" && CGO_ENABLED=0 go build -o /usr/local/bin/stako-core ./cmd/stako-core)
-  (cd "$tmp/src" && CGO_ENABLED=0 go build -o /usr/local/bin/stako-agent ./cmd/stako-agent)
-  (cd "$tmp/src" && CGO_ENABLED=0 go build -o /usr/local/bin/stako ./cmd/stako)
+  (cd "$tmp/src" && go build -o /usr/local/bin/stako-core ./cmd/stako-core)
+  (cd "$tmp/src" && go build -o /usr/local/bin/stako-agent ./cmd/stako-agent)
+  (cd "$tmp/src" && go build -o /usr/local/bin/stako ./cmd/stako)
   chmod 0755 /usr/local/bin/stako-core /usr/local/bin/stako-agent /usr/local/bin/stako
 }
 
