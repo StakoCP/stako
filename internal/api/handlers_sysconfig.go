@@ -47,7 +47,38 @@ func (s *Server) handleListSysConfigs(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"items": managedServiceConfigs})
+	specs := make([]map[string]string, 0, len(managedServices))
+	for _, m := range managedServices {
+		specs = append(specs, map[string]string{"id": m.ID, "unit": m.Unit, "apt_pkg": m.AptPkg})
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdSysServiceList, map[string]any{"services": specs})
+	if err != nil || !resp.OK {
+		WriteJSON(w, http.StatusOK, map[string]any{"items": managedServiceConfigs})
+		return
+	}
+	rawMap, ok := resp.Data["services"].(map[string]any)
+	if !ok {
+		WriteJSON(w, http.StatusOK, map[string]any{"items": managedServiceConfigs})
+		return
+	}
+	installedCfg := map[string]bool{}
+	for _, m := range managedServices {
+		if m.ConfigService == "" {
+			continue
+		}
+		if d, ok := rawMap[m.ID].(map[string]any); ok {
+			if inst, _ := d["installed"].(bool); inst {
+				installedCfg[m.ConfigService] = true
+			}
+		}
+	}
+	out := []serviceConfigSpec{}
+	for _, c := range managedServiceConfigs {
+		if installedCfg[c.Service] {
+			out = append(out, c)
+		}
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (s *Server) handleGetSysConfig(w http.ResponseWriter, r *http.Request) {

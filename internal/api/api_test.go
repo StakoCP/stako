@@ -588,7 +588,7 @@ func TestSystemConfigEditor(t *testing.T) {
 
 	// List managed configs
 	rec = doReq(t, h, "GET", "/api/v1/system/configs", nil, cookies, "")
-	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("nginx")) || !bytes.Contains(rec.Body.Bytes(), []byte("powerdns")) {
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("nginx")) {
 		t.Fatalf("list sysconfigs = %d: %s", rec.Code, rec.Body.String())
 	}
 
