@@ -406,6 +406,15 @@ pre,
   font-size: 12px;
 }
 
+.btn-icon {
+  padding: 5px;
+  min-width: 28px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .btn-block {
   width: 100%;
 }

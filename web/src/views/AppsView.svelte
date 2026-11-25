@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import Pagination from '../components/Pagination.svelte';
   import { api, ApiError } from '../lib/api';
@@ -327,31 +328,63 @@
               <div class="table-actions">
                 {#if canWrite}
                   {#if a.status !== 'running'}
-                    <button type="button" class="btn btn-sm" onclick={() => triggerAction(a, 'start')}>
-                      {i18n.t.apps.start}
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-icon"
+                      title={i18n.t.apps.start}
+                      aria-label={i18n.t.apps.start}
+                      onclick={() => triggerAction(a, 'start')}
+                    >
+                      <ActionIcon name="start" />
                     </button>
                   {:else}
-                    <button type="button" class="btn btn-sm" onclick={() => triggerAction(a, 'stop')}>
-                      {i18n.t.apps.stop}
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-icon"
+                      title={i18n.t.apps.stop}
+                      aria-label={i18n.t.apps.stop}
+                      onclick={() => triggerAction(a, 'stop')}
+                    >
+                      <ActionIcon name="stop" />
                     </button>
                   {/if}
-                  <button type="button" class="btn btn-sm" onclick={() => triggerAction(a, 'restart')}>
-                    {i18n.t.apps.restart}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.apps.restart}
+                    aria-label={i18n.t.apps.restart}
+                    onclick={() => triggerAction(a, 'restart')}
+                  >
+                    <ActionIcon name="restart" />
                   </button>
-                  <button type="button" class="btn btn-sm" onclick={() => openEdit(a)}>
-                    {i18n.t.common.edit}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.common.edit}
+                    aria-label={i18n.t.common.edit}
+                    onclick={() => openEdit(a)}
+                  >
+                    <ActionIcon name="edit" />
                   </button>
                 {/if}
-                <button type="button" class="btn btn-sm" onclick={() => openLogs(a)}>
-                  {i18n.t.apps.logs}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.apps.logs}
+                  aria-label={i18n.t.apps.logs}
+                  onclick={() => openLogs(a)}
+                >
+                  <ActionIcon name="logs" />
                 </button>
                 {#if canWrite}
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => (deleteTarget = a)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 {/if}
               </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { formatDateTime } from '../lib/format';
@@ -176,10 +177,12 @@
             <td>
               <button
                 type="button"
-                class="btn btn-sm btn-danger"
+                class="btn btn-sm btn-icon btn-danger"
+                title={i18n.t.common.delete}
+                aria-label={i18n.t.common.delete}
                 onclick={() => (deleteTarget = wh)}
               >
-                {i18n.t.common.delete}
+                <ActionIcon name="delete" />
               </button>
             </td>
           </tr>

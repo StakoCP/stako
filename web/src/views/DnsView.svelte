@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { auth } from '../lib/auth.svelte';
@@ -254,16 +255,24 @@
             <td>{formatDateTime(z.created_at, localeCode)}</td>
             <td>
               <div class="table-actions">
-                <button type="button" class="btn btn-sm" onclick={() => selectZone(z)}>
-                  {i18n.t.dns.manageRecords}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.dns.manageRecords}
+                  aria-label={i18n.t.dns.manageRecords}
+                  onclick={() => selectZone(z)}
+                >
+                  <ActionIcon name="config" />
                 </button>
                 {#if canWrite}
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => (deleteZoneTarget = z)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 {/if}
               </div>
@@ -328,10 +337,12 @@
                 <td>
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => (deleteRecordTarget = rec)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 </td>
               {/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import Pagination from '../components/Pagination.svelte';
   import { api, ApiError } from '../lib/api';
@@ -206,17 +207,21 @@
                 <div class="table-actions">
                   <button
                     type="button"
-                    class="btn btn-sm"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.databases.backup}
+                    aria-label={i18n.t.databases.backup}
                     onclick={() => triggerBackup(db)}
                   >
-                    {i18n.t.databases.backup}
+                    <ActionIcon name="backup" />
                   </button>
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => (deleteTarget = db)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 </div>
               </td>

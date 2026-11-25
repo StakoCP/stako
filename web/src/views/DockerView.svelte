@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import Pagination from '../components/Pagination.svelte';
   import { api, ApiError } from '../lib/api';
@@ -406,51 +407,63 @@
                     {#if c.status !== 'running'}
                       <button
                         type="button"
-                        class="btn btn-sm"
+                        class="btn btn-sm btn-icon"
+                        title={i18n.t.docker.start}
+                        aria-label={i18n.t.docker.start}
                         onclick={() => triggerContainerAction(c, 'start')}
                       >
-                        {i18n.t.docker.start}
+                        <ActionIcon name="start" />
                       </button>
                     {:else}
                       <button
                         type="button"
-                        class="btn btn-sm"
+                        class="btn btn-sm btn-icon"
+                        title={i18n.t.docker.stop}
+                        aria-label={i18n.t.docker.stop}
                         onclick={() => triggerContainerAction(c, 'stop')}
                       >
-                        {i18n.t.docker.stop}
+                        <ActionIcon name="stop" />
                       </button>
                     {/if}
                     <button
                       type="button"
-                      class="btn btn-sm"
+                      class="btn btn-sm btn-icon"
+                      title={i18n.t.docker.restart}
+                      aria-label={i18n.t.docker.restart}
                       onclick={() => triggerContainerAction(c, 'restart')}
                     >
-                      {i18n.t.docker.restart}
+                      <ActionIcon name="restart" />
                     </button>
                     {#if c.repo_url}
                       <button
                         type="button"
-                        class="btn btn-sm"
+                        class="btn btn-sm btn-icon"
+                        title={i18n.t.docker.rebuild}
+                        aria-label={i18n.t.docker.rebuild}
                         onclick={() => triggerRebuild(c)}
                       >
-                        {i18n.t.docker.rebuild}
+                        <ActionIcon name="rebuild" />
                       </button>
                     {/if}
                   {/if}
                   <button
                     type="button"
-                    class="btn btn-sm"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.docker.logs}
+                    aria-label={i18n.t.docker.logs}
                     onclick={() => openLogs(c)}
                   >
-                    {i18n.t.docker.logs}
+                    <ActionIcon name="logs" />
                   </button>
                   {#if canWrite}
                     <button
                       type="button"
-                      class="btn btn-sm btn-danger"
+                      class="btn btn-sm btn-icon btn-danger"
+                      title={i18n.t.common.delete}
+                      aria-label={i18n.t.common.delete}
                       onclick={() => (deleteContainerTarget = c)}
                     >
-                      {i18n.t.common.delete}
+                      <ActionIcon name="delete" />
                     </button>
                   {/if}
                 </div>
@@ -511,10 +524,12 @@
                   <div class="table-actions">
                     <button
                       type="button"
-                      class="btn btn-sm btn-danger"
+                      class="btn btn-sm btn-icon btn-danger"
+                      title={i18n.t.common.delete}
+                      aria-label={i18n.t.common.delete}
                       onclick={() => (deleteStackTarget = st)}
                     >
-                      {i18n.t.common.delete}
+                      <ActionIcon name="delete" />
                     </button>
                   </div>
                 </td>

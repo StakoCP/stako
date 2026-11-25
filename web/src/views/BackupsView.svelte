@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { auth } from '../lib/auth.svelte';
@@ -232,18 +233,22 @@
                 <div class="table-actions">
                   <button
                     type="button"
-                    class="btn btn-sm"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.backups.restore}
+                    aria-label={i18n.t.backups.restore}
                     onclick={() => (restoreTarget = b)}
                     disabled={b.status !== 'completed'}
                   >
-                    {i18n.t.backups.restore}
+                    <ActionIcon name="restore" />
                   </button>
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => (deleteTarget = b)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 </div>
               </td>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Pagination from '../components/Pagination.svelte';
   import { api, ApiError } from '../lib/api';
   import { formatDateTime } from '../lib/format';
@@ -209,10 +210,12 @@
               <td>
                 <button
                   type="button"
-                  class="btn btn-sm"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.users.viewJob}
+                  aria-label={i18n.t.users.viewJob}
                   onclick={() => router.navigate(`/jobs/${job.id}`)}
                 >
-                  {i18n.t.users.viewJob}
+                  <ActionIcon name="eye" />
                 </button>
               </td>
             </tr>

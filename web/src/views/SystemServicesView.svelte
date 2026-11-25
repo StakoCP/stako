@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { fmt, i18n } from '../lib/i18n.svelte';
@@ -260,58 +261,70 @@
                     {#if !isServiceActive(svc)}
                       <button
                         type="button"
-                        class="btn btn-sm btn-primary"
+                        class="btn btn-sm btn-icon btn-primary"
+                        title={i18n.t.sysServices.actionStart}
+                        aria-label={i18n.t.sysServices.actionStart}
                         onclick={() => handleAction(svc, 'start')}
                         disabled={isBusy}
                       >
-                        {i18n.t.sysServices.actionStart}
+                        <ActionIcon name="start" />
                       </button>
                     {:else if !svc.protected}
                       <button
                         type="button"
-                        class="btn btn-sm"
+                        class="btn btn-sm btn-icon"
+                        title={i18n.t.sysServices.actionStop}
+                        aria-label={i18n.t.sysServices.actionStop}
                         onclick={() => handleAction(svc, 'stop')}
                         disabled={isBusy}
                       >
-                        {i18n.t.sysServices.actionStop}
+                        <ActionIcon name="stop" />
                       </button>
                     {/if}
                     <button
                       type="button"
-                      class="btn btn-sm"
+                      class="btn btn-sm btn-icon"
+                      title={i18n.t.sysServices.actionRestart}
+                      aria-label={i18n.t.sysServices.actionRestart}
                       onclick={() => handleAction(svc, 'restart')}
                       disabled={isBusy}
                     >
-                      {i18n.t.sysServices.actionRestart}
+                      <ActionIcon name="restart" />
                     </button>
                     {#if svc.config_service}
                       <button
                         type="button"
-                        class="btn btn-sm"
+                        class="btn btn-sm btn-icon"
+                        title={i18n.t.sysServices.actionConfig}
+                        aria-label={i18n.t.sysServices.actionConfig}
                         onclick={() => router.navigate('/configs')}
                         disabled={isBusy}
                       >
-                        {i18n.t.sysServices.actionConfig}
+                        <ActionIcon name="config" />
                       </button>
                     {/if}
                     {#if !svc.protected}
                       <button
                         type="button"
-                        class="btn btn-sm btn-danger"
+                        class="btn btn-sm btn-icon btn-danger"
+                        title={i18n.t.sysServices.actionUninstall}
+                        aria-label={i18n.t.sysServices.actionUninstall}
                         onclick={() => (uninstallTarget = svc)}
                         disabled={isBusy}
                       >
-                        {i18n.t.sysServices.actionUninstall}
+                        <ActionIcon name="delete" />
                       </button>
                     {/if}
                   {:else}
                     <button
                       type="button"
-                      class="btn btn-sm btn-primary"
+                      class="btn btn-sm btn-icon btn-primary"
+                      title={i18n.t.sysServices.actionInstall}
+                      aria-label={i18n.t.sysServices.actionInstall}
                       onclick={() => handleInstall(svc)}
                       disabled={isBusy}
                     >
-                      {i18n.t.sysServices.actionInstall}
+                      <ActionIcon name="install" />
                     </button>
                   {/if}
                 </div>

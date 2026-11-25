@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import Pagination from '../components/Pagination.svelte';
   import { api, ApiError } from '../lib/api';
@@ -275,26 +276,42 @@
                 {#if canImpersonate(u)}
                   <button
                     type="button"
-                    class="btn btn-sm"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.impersonation.loginAs}
+                    aria-label={i18n.t.impersonation.loginAs}
                     onclick={() => handleImpersonate(u)}
                     disabled={impersonatingId === u.id}
                   >
-                    {i18n.t.impersonation.loginAs}
+                    <ActionIcon name="impersonate" />
                   </button>
                 {/if}
-                <button type="button" class="btn btn-sm" onclick={() => openEdit(u)}>
-                  {i18n.t.common.edit}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.common.edit}
+                  aria-label={i18n.t.common.edit}
+                  onclick={() => openEdit(u)}
+                >
+                  <ActionIcon name="edit" />
                 </button>
-                <button type="button" class="btn btn-sm" onclick={() => toggleSuspend(u)}>
-                  {u.status === 'active' ? i18n.t.users.suspend : i18n.t.users.unsuspend}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={u.status === 'active' ? i18n.t.users.suspend : i18n.t.users.unsuspend}
+                  aria-label={u.status === 'active' ? i18n.t.users.suspend : i18n.t.users.unsuspend}
+                  onclick={() => toggleSuspend(u)}
+                >
+                  <ActionIcon name={u.status === 'active' ? 'lock' : 'unlock'} />
                 </button>
                 {#if u.id !== auth.user?.id}
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => (deleteTarget = u)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 {/if}
               </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import Pagination from '../components/Pagination.svelte';
   import { api, ApiError } from '../lib/api';
@@ -406,23 +407,43 @@
             <td>
               <div class="table-actions">
                 {#if canWrite}
-                  <button type="button" class="btn btn-sm" onclick={() => openEdit(d)}>
-                    {i18n.t.common.edit}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.common.edit}
+                    aria-label={i18n.t.common.edit}
+                    onclick={() => openEdit(d)}
+                  >
+                    <ActionIcon name="edit" />
                   </button>
-                  <button type="button" class="btn btn-sm" onclick={() => issueSsl(d)}>
-                    {i18n.t.domains.issueSsl}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.domains.issueSsl}
+                    aria-label={i18n.t.domains.issueSsl}
+                    onclick={() => issueSsl(d)}
+                  >
+                    <ActionIcon name="ssl" />
                   </button>
                 {/if}
-                <button type="button" class="btn btn-sm" onclick={() => openProxyRules(d)}>
-                  {i18n.t.domains.proxyRules}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.domains.proxyRules}
+                  aria-label={i18n.t.domains.proxyRules}
+                  onclick={() => openProxyRules(d)}
+                >
+                  <ActionIcon name="proxy" />
                 </button>
                 {#if canWrite}
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => (deleteTarget = d)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 {/if}
               </div>
@@ -639,10 +660,12 @@
                 <td>
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
                     onclick={() => deleteProxyRule(rule.id)}
                   >
-                    {i18n.t.common.delete}
+                    <ActionIcon name="delete" />
                   </button>
                 </td>
               {/if}

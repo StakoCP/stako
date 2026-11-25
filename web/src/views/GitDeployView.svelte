@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { auth } from '../lib/auth.svelte';
@@ -208,20 +209,26 @@
                   <div class="table-actions">
                     <button
                       type="button"
-                      class="btn btn-sm btn-primary"
+                      class="btn btn-sm btn-icon btn-primary"
+                      title={triggeringId === d.id
+                        ? i18n.t.gitDeploy.triggering
+                        : i18n.t.gitDeploy.trigger}
+                      aria-label={triggeringId === d.id
+                        ? i18n.t.gitDeploy.triggering
+                        : i18n.t.gitDeploy.trigger}
                       onclick={() => triggerDeploy(d)}
                       disabled={triggeringId === d.id}
                     >
-                      {triggeringId === d.id
-                        ? i18n.t.gitDeploy.triggering
-                        : i18n.t.gitDeploy.trigger}
+                      <ActionIcon name="deploy" />
                     </button>
                     <button
                       type="button"
-                      class="btn btn-sm btn-danger"
+                      class="btn btn-sm btn-icon btn-danger"
+                      title={i18n.t.common.delete}
+                      aria-label={i18n.t.common.delete}
                       onclick={() => (deleteTarget = d)}
                     >
-                      {i18n.t.common.delete}
+                      <ActionIcon name="delete" />
                     </button>
                   </div>
                 </td>
