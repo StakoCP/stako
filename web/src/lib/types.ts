@@ -570,3 +570,19 @@ export interface SystemUpdateInfo {
   update_available: boolean;
   release_url?: string | null;
 }
+
+export type SystemServiceAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable';
+
+export interface SystemService {
+  id: string;
+  label: string;
+  category: string;
+  unit: string;
+  apt_pkg: string;
+  config_service?: string | null;
+  protected: boolean;
+  installed: boolean;
+  version: string;
+  active: boolean;
+  enabled: boolean;
+}

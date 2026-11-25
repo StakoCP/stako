@@ -209,6 +209,12 @@
           roles: ['admin'],
         },
         {
+          path: '/system-services',
+          label: () => i18n.t.nav.systemServices,
+          activeNames: ['system-services'],
+          roles: ['admin'],
+        },
+        {
           path: '/terminal',
           label: () => i18n.t.nav.terminal,
           activeNames: ['terminal'],

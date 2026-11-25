@@ -617,6 +617,78 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		}
 		return runExec(resp, false, logger, "bash", "-c", "curl -fsSL https://raw.githubusercontent.com/StakoCP/stako/refs/heads/main/installer/install.sh | bash -s -- --update --version "+ver)
 
+	case agentproto.CmdSysServiceList:
+		outMap := map[string]any{}
+		if rawList, ok := req.Args["services"].([]any); ok {
+			for _, item := range rawList {
+				m, _ := item.(map[string]any)
+				id, _ := m["id"].(string)
+				unit, _ := m["unit"].(string)
+				pkg, _ := m["apt_pkg"].(string)
+				if id == "" {
+					continue
+				}
+				if dryRun {
+					active := "inactive"
+					installed := false
+					ver := ""
+					if id == "nginx" || id == "mariadb" || id == "php8.4-fpm" || id == "ssh" || id == "nftables" || id == "fail2ban" {
+						installed = true
+						active = "active"
+						ver = "1.0.0-dryrun"
+					}
+					outMap[id] = map[string]any{"installed": installed, "version": ver, "active": active, "enabled": installed}
+					continue
+				}
+				installed := false
+				ver := ""
+				if stOut, err := exec.Command("dpkg-query", "-W", "-f=${Status}|${Version}", pkg).Output(); err == nil {
+					parts := strings.SplitN(strings.TrimSpace(string(stOut)), "|", 2)
+					if len(parts) == 2 && parts[0] == "install ok installed" {
+						installed = true
+						ver = parts[1]
+					}
+				}
+				active := "not-installed"
+				enabled := false
+				if installed {
+					actOut, _ := exec.Command("systemctl", "is-active", unit).Output()
+					active = strings.TrimSpace(string(actOut))
+					if active == "" {
+						active = "inactive"
+					}
+					enOut, _ := exec.Command("systemctl", "is-enabled", unit).Output()
+					enabled = strings.TrimSpace(string(enOut)) == "enabled"
+				}
+				outMap[id] = map[string]any{"installed": installed, "version": ver, "active": active, "enabled": enabled}
+			}
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"services": outMap}
+		return resp
+
+	case agentproto.CmdSysServiceAct:
+		unit, _ := req.Args["unit"].(string)
+		action, _ := req.Args["action"].(string)
+		return runExec(resp, dryRun, logger, "systemctl", action, unit)
+
+	case agentproto.CmdSysServicePkg:
+		action, _ := req.Args["action"].(string)
+		pkg, _ := req.Args["apt_pkg"].(string)
+		unit, _ := req.Args["unit"].(string)
+		if action == "uninstall" {
+			_ = runExec(resp, dryRun, logger, "systemctl", "disable", "--now", unit)
+			r := runExec(resp, dryRun, logger, "apt-get", "remove", "--purge", "-y", pkg)
+			_ = runExec(resp, dryRun, logger, "apt-get", "autoremove", "-y")
+			return r
+		}
+		_ = runExec(resp, dryRun, logger, "apt-get", "update", "-y")
+		r := runExec(resp, dryRun, logger, "apt-get", "install", "-y", pkg)
+		if r.OK {
+			_ = runExec(resp, dryRun, logger, "systemctl", "enable", "--now", unit)
+		}
+		return r
+
 	default:
 		logger.Warn("rejected unknown command", "command", req.Command)
 		resp.Error = "command not in allowlist: " + req.Command

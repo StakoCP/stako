@@ -653,3 +653,59 @@ func TestPanelSelfUpdate(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestSystemServicesManager(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// List detected services
+	rec = doReq(t, h, "GET", "/api/v1/system/services", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("nginx")) {
+		t.Fatalf("list sysservices = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Start/restart nginx
+	rec = doReq(t, h, "POST", "/api/v1/system/services/nginx/action", map[string]string{"action": "restart"}, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("restart nginx = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Protected service (ssh) cannot be stopped
+	rec = doReq(t, h, "POST", "/api/v1/system/services/ssh/action", map[string]string{"action": "stop"}, cookies, csrf)
+	if rec.Code != 403 {
+		t.Fatalf("expected 403 stopping ssh, got %d", rec.Code)
+	}
+
+	// Install service
+	rec = doReq(t, h, "POST", "/api/v1/system/services/redis/install", nil, cookies, csrf)
+	if rec.Code != 202 {
+		t.Fatalf("install redis = %d", rec.Code)
+	}
+
+	// Reauth -> uninstall non-protected service; protected ssh still 403
+	if rec := doReq(t, h, "POST", "/api/v1/auth/reauth", map[string]string{"password": "Admin-Strong-Password-123"}, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("reauth = %d", rec.Code)
+	}
+	if rec := doReq(t, h, "DELETE", "/api/v1/system/services/ssh", nil, cookies, csrf); rec.Code != 403 {
+		t.Fatalf("expected 403 uninstalling ssh, got %d", rec.Code)
+	}
+	if rec := doReq(t, h, "DELETE", "/api/v1/system/services/redis", nil, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("uninstall redis = %d", rec.Code)
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

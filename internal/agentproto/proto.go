@@ -60,6 +60,9 @@ const (
 	CmdSysConfigRead   = "sysconfig.read"
 	CmdSysConfigApply  = "sysconfig.apply"
 	CmdPanelUpdate     = "panel.update"
+	CmdSysServiceList  = "sysservice.list"
+	CmdSysServiceAct   = "sysservice.action"
+	CmdSysServicePkg   = "sysservice.pkg"
 )
 
 type Request struct {

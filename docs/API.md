@@ -408,3 +408,9 @@ Query `limit` (default 50, maks 200) dan `offset`. Respons: `{ "items": [...], "
 ## Update Stako In-Place (`7.18 FR-UP6`, admin)
 - `GET /system/update` → `{ "current_version": "0.1.0", "latest_version": "v0.1.0", "update_available": false, "release_url": "..." }`
 - `POST /system/update` `{ "version"?: "latest", "channel"?: "stable"|"beta" }` → `202 { "job_id": "j_...", "backup_id": "bk_..." }` (wajib reauth; membuat backup otomatis sebelum update)
+
+## Smart System Services Manager (`7.21 FR-IN7`, admin)
+- `GET /system/services` → `{ "items": [{ "id", "label", "category", "unit", "apt_pkg", "config_service"?, "protected", "installed", "version", "active", "enabled" }], "total": N }`
+- `POST /system/services/{id}/action` `{ "action": "start|stop|restart|enable|disable" }` → `200 { "ok": true, "output": "..." }`
+- `POST /system/services/{id}/install` → `202 { "job_id": "j_..." }`
+- `DELETE /system/services/{id}` → `202 { "job_id": "j_..." }` (wajib reauth; layanan `protected` seperti `ssh` dan `nftables` ditolak)

@@ -162,6 +162,8 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdPanelImport
 	case "panel.update":
 		cmd = agentproto.CmdPanelUpdate
+	case "sysservice.install", "sysservice.uninstall":
+		cmd = agentproto.CmdSysServicePkg
 	default:
 		errMsg := "unknown job type: " + j.Type
 		logf("error: %s", errMsg)
