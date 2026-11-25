@@ -5,6 +5,7 @@
 # removes incompatible versions, configures rootless Docker, hardens OS, and
 # installs Stako binaries + systemd units.
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 PRESET="standard"
 DRY_RUN=0
@@ -107,7 +108,7 @@ ensure_pkg() {
 
 setup_repos() {
   log "Ensuring official upstream repositories (PHP Ondrej, NodeSource, Docker)..."
-  run_cmd DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gnupg lsb-release software-properties-common
+  run_cmd apt-get install -y curl ca-certificates gnupg lsb-release software-properties-common
 
   if [[ "$DRY_RUN" -eq 0 ]]; then
     # PHP PPA for 8.2 / 8.3
@@ -355,7 +356,7 @@ main() {
 
   run_cmd apt-get update -y
   if [[ "$SKIP_UPGRADE" -eq 0 ]]; then
-    run_cmd DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+    run_cmd apt-get upgrade -y
   fi
   setup_repos
   install_backend_stack
