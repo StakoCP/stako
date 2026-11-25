@@ -2,7 +2,7 @@
 
 Open-source, Docker-first hosting control panel for Ubuntu Server (22.04 LTS / 24.04 LTS), licensed under **MIT** (`github.com/StakoCP/stako`).
 
-See [docs/PRD.md](docs/PRD.md), [docs/API.md](docs/API.md), and [CHANGELOG.md](CHANGELOG.md).
+See [docs/PRD.md](docs/PRD.md), [docs/API.md](docs/API.md), [docs/INSTALL_UBUNTU.md](docs/INSTALL_UBUNTU.md) ([HTML](docs/INSTALL_UBUNTU.html)), and [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 

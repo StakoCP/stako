@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Panduan Instalasi Stako di VPS Ubuntu (22.04 / 24.04 LTS)</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #475569;
+      --accent: #2563eb;
+      --code-bg: #0f172a;
+      --code-fg: #f8fafc;
+      --warn-bg: #fef3c7;
+      --warn-border: #f59e0b;
+      --ok-bg: #dcfce7;
+      --ok-border: #16a34a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1120;
+        --surface: #111827;
+        --border: #1f2937;
+        --text: #f1f5f9;
+        --muted: #94a3b8;
+        --accent: #60a5fa;
+        --code-bg: #020617;
+        --code-fg: #e2e8f0;
+        --warn-bg: #451a03;
+        --warn-border: #d97706;
+        --ok-bg: #052e16;
+        --ok-border: #22c55e;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .container {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    h1 { margin: 0 0 0.5rem; font-size: 1.9rem; }
+    h2 {
+      margin-top: 2.25rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 1.35rem;
+    }
+    h3 { margin-top: 1.5rem; font-size: 1.1rem; }
+    p, li { color: var(--text); }
+    .subtitle { color: var(--muted); margin: 0; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+    }
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--surface);
+      padding: 0.85rem 1rem;
+      border-radius: 0 8px 8px 0;
+      margin: 1rem 0;
+    }
+    .callout.warn {
+      border-left-color: var(--warn-border);
+      background: var(--warn-bg);
+    }
+    .callout.ok {
+      border-left-color: var(--ok-border);
+      background: var(--ok-bg);
+    }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 0.9rem 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+    :not(pre) > code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 0.1rem 0.35rem;
+      border-radius: 5px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.85rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      font-size: 0.92rem;
+    }
+    th { background: rgba(100, 116, 139, 0.1); font-weight: 600; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      background: var(--accent);
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <span class="badge">Stako Control Panel v0.1.0</span>
+      <h1>Panduan Instalasi Stako di VPS Ubuntu</h1>
+      <p class="subtitle">Ubuntu Server 22.04 LTS &amp; 24.04 LTS (amd64 / arm64) — dari awal hingga siap produksi.</p>
+    </header>
+
+    <h2>1. Prasyarat Server</h2>
+    <div class="card">
+      <ul>
+        <li><strong>OS:</strong> Ubuntu Server <strong>22.04 LTS</strong> atau <strong>24.04 LTS</strong> (<code>amd64</code> atau <code>arm64</code>).</li>
+        <li><strong>Akses:</strong> <code>root</code> atau user dengan hak <code>sudo</code> lewat SSH.</li>
+        <li><strong>Spesifikasi Minimum:</strong>
+          <ul>
+            <li><strong>Basic:</strong> 1 vCPU, 1 GB RAM, 15 GB disk.</li>
+            <li><strong>Standard (disarankan):</strong> 2 vCPU, 2–4 GB RAM, 25 GB disk.</li>
+            <li><strong>Full:</strong> 2+ vCPU, 4+ GB RAM, 40 GB disk.</li>
+          </ul>
+        </li>
+        <li><strong>Port Jaringan:</strong> Buka <code>22/tcp</code> (SSH), <code>80/tcp</code>, <code>443/tcp</code> (Web), dan <code>8083/tcp</code> (Panel Stako). Opsional: <code>21/tcp</code> (FTPS), <code>25/465/587/993</code> (Mail), <code>53/tcp+udp</code> (jika <code>--with-dns</code>).</li>
+      </ul>
+    </div>
+
+    <h2>2. Persiapan Awal VPS</h2>
+    <p>Masuk ke VPS via SSH, atur hostname FQDN, zona waktu, dan perbarui paket sistem:</p>
+    <pre><code>ssh root@IP_VPS_ANDA
+
+sudo hostnamectl set-hostname panel.domainanda.com
+sudo timedatectl set-timezone Asia/Jakarta
+sudo apt-get update &amp;&amp; sudo apt-get upgrade -y</code></pre>
+
+    <h2>3. Metode Instalasi</h2>
+
+    <h3>Opsi A — Instalasi Otomatis dari GitHub Releases (Rekomendasi)</h3>
+    <p>Installer cerdas (<code>installer/install.sh</code>) menjalankan <code>apt-get update &amp;&amp; upgrade</code>, menambahkan repo resmi (PHP 8.4/8.5, NodeSource 22.x, Docker CE), memeriksa versi tiap paket (menghapus versi lama yang tidak kompatibel lalu memasang versi yang sesuai), memverifikasi checksum binary Stako, menerapkan hardening baseline OS, dan menyalakan layanan <code>systemd</code>.</p>
+    <pre><code># 1. Unduh skrip installer
+curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh
+
+# 2. (Opsional) Simulasi rencana instalasi tanpa mengubah sistem
+sudo bash install.sh --dry-run --preset standard
+
+# 3. Jalankan instalasi (preset: basic | standard | full)
+sudo bash install.sh --preset standard</code></pre>
+    <div class="callout">
+      <strong>DNS Server Opsional:</strong> Secara default PowerDNS tidak dipasang. Tambahkan <code>--with-dns</code> jika ingin memasang PowerDNS bawaan.
+    </div>
+
+    <h3>Opsi B — Instalasi dari Binary Lokal (<code>dist/</code>)</h3>
+    <p>Jika Anda sudah melakukan cross-compile ke folder <code>dist/</code> di komputer lokal:</p>
+    <pre><code># Dari komputer lokal: unggah dist/ dan installer ke VPS
+scp -r dist installer/install.sh root@IP_VPS_ANDA:/root/stako-pkg/
+
+# Di VPS: verifikasi checksum dan jalankan installer
+cd /root/stako-pkg
+sha256sum -c dist/SHA256SUMS --ignore-missing
+sudo bash install.sh --preset standard --from-dir ./dist</code></pre>
+
+    <h2>4. Paket Backend per Preset</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Preset</th>
+          <th>Layanan &amp; Dependensi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Basic</strong></td>
+          <td><code>nginx</code>, <strong>PHP 8.4</strong> (<code>php8.4-fpm</code> + ekstensi), <code>mariadb-server</code>, <code>nftables</code>, <code>fail2ban</code>, <code>auditd</code>, <code>unattended-upgrades</code>, <code>certbot</code>, <code>openssh-server</code></td>
+        </tr>
+        <tr>
+          <td><strong>Standard</strong> <em>(default)</em></td>
+          <td>Semua Basic + <code>apache2</code>, <code>postgresql</code>, <code>nodejs</code> (22.x), <code>golang-go</code>, <code>python3</code>, <code>docker-ce</code> + <code>uidmap</code> + <code>dbus-user-session</code> (<strong>Docker rootless</strong>), <code>redis-server</code>, <code>postfix</code> + <code>dovecot</code> + <code>rspamd</code>, <code>proftpd-basic</code>, <code>restic</code></td>
+        </tr>
+        <tr>
+          <td><strong>Full</strong></td>
+          <td>Semua Standard + <code>php8.3-fpm</code>, <code>php8.5-fpm</code>, <code>rabbitmq-server</code>, <code>clamav</code>, <code>spamassassin</code>, <code>goaccess</code>, <code>libnginx-mod-http-modsecurity</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>5. Verifikasi Setelah Instalasi</h2>
+    <pre><code># Cek status layanan systemd
+sudo systemctl status stako-agent stako-core nginx --no-pager
+
+# Jalankan diagnosa Stako
+stako --insecure doctor
+
+# Cek log instalasi &amp; konfigurasi tersimpan
+sudo tail -n 50 /var/log/stako-install.log
+cat /etc/stako/install.yml</code></pre>
+
+    <h2>6. Login Pertama &amp; Pengamanan Awal</h2>
+    <div class="callout ok">
+      Buka browser ke <code>https://IP_VPS_ANDA:8083</code> dan login memakai akun <code>admin</code> serta password yang tampil di akhir proses <code>stako-core bootstrap-admin</code>.
+    </div>
+    <ol>
+      <li><strong>Wajib Aktifkan 2FA TOTP:</strong> Panel akan langsung meminta setup 2FA pada login pertama admin/reseller. Pindai QR code lalu simpan 8 <em>recovery code</em> di tempat aman.</li>
+      <li><strong>Pasang Domain &amp; SSL:</strong> Buka menu <strong>Domains</strong>, tambahkan domain panel Anda, lalu terbitkan sertifikat Let's Encrypt.</li>
+      <li><strong>Jalankan Pemindaian Keamanan:</strong> Buka menu <strong>Security &amp; Updates</strong> → klik <strong>Run Security &amp; CVE Scan</strong>.</li>
+    </ol>
+
+    <h2>7. Operasional Harian &amp; Pemecahan Masalah</h2>
+    <table>
+      <thead>
+        <tr><th>Kebutuhan</th><th>Perintah / Lokasi</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Buat ulang/tambah akun admin</td><td><code>sudo stako-core bootstrap-admin --username admin2 --email admin@domain.com</code></td></tr>
+        <tr><td>Log API &amp; Agent</td><td><code>sudo journalctl -u stako-core -u stako-agent -n 100 --no-pager</code></td></tr>
+        <tr><td>Restart layanan panel</td><td><code>sudo systemctl restart stako-agent stako-core</code></td></tr>
+        <tr><td>Database &amp; Master Key</td><td><code>/var/lib/stako/stako.db</code> &amp; <code>/etc/stako/keys/master.key</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <strong>Penting:</strong> Cadangkan <code>/etc/stako/keys/master.key</code> di luar server. Tanpa kunci ini, arsip backup terenkripsi, secret environment aplikasi, dan secret 2FA tidak dapat didekripsi saat pemulihan.
+    </div>
+  </div>
+</body>
+</html>
