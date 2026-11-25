@@ -364,9 +364,14 @@ func (s *Server) handleInstallCatalogApp(w http.ResponseWriter, r *http.Request)
 		handleStoreErr(w, err)
 		return
 	}
+	owner, _ := s.store.GetUserByID(r.Context(), dom.UserID)
+	username := ac.User.Username
+	if owner != nil {
+		username = owner.Username
+	}
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "catalog.install", ac.User.ID, map[string]any{
-		"app_slug": appDef.Slug, "domain": dom.Domain,
+		"app_slug": appDef.Slug, "domain": dom.Domain, "username": username, "docroot": dom.Docroot,
 	}); err == nil {
 		jobID = &j.ID
 	}

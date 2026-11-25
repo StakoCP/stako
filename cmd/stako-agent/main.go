@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/StakoCP/stako/internal/agentproto"
+	"github.com/StakoCP/stako/internal/catalog"
 	"github.com/StakoCP/stako/internal/version"
 )
 
@@ -490,7 +491,59 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 	case agentproto.CmdCatalogInstall:
 		slug, _ := req.Args["app_slug"].(string)
 		domain, _ := req.Args["domain"].(string)
-		return runExec(resp, dryRun, logger, "stako-app-installer", slug, domain)
+		username, _ := req.Args["username"].(string)
+		docroot, _ := req.Args["docroot"].(string)
+		if err := agentproto.ValidateDomain(domain); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		appDef, ok := catalog.Find(slug)
+		if !ok {
+			resp.Error = "unknown app slug: " + slug
+			return resp
+		}
+		if appDef.Type == "docker" {
+			cname := "stako-" + slug + "-" + strings.ReplaceAll(domain, ".", "-")
+			if dryRun {
+				return runExec(resp, true, logger, "docker", "run", "-d", "--name", cname, appDef.Image)
+			}
+			_ = runExec(resp, false, logger, "docker", "rm", "-f", cname)
+			return runExec(resp, false, logger, "docker", "run", "-d", "--name", cname,
+				"--restart", "unless-stopped", "--security-opt", "no-new-privileges", "--cap-drop=ALL",
+				"-p", fmt.Sprintf("127.0.0.1:0:%d", appDef.DefaultPort), appDef.Image)
+		}
+		if docroot == "" {
+			docroot = "/var/www/" + domain + "/public_html"
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "install-php-app", slug, docroot)
+		}
+		if err := os.MkdirAll(docroot, 0o755); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		var r agentproto.Response
+		switch slug {
+		case "wordpress":
+			r = runExec(resp, false, logger, "bash", "-c",
+				fmt.Sprintf("curl -fsSL https://wordpress.org/latest.tar.gz | tar -xz --strip-components=1 -C %q", docroot))
+		case "adminer":
+			r = runExec(resp, false, logger, "curl", "-fsSL",
+				"https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php",
+				"-o", filepath.Join(docroot, "index.php"))
+		default:
+			if err := os.WriteFile(filepath.Join(docroot, "index.php"), []byte("<?php echo 'Stako "+appDef.Name+" ready';\n"), 0o644); err != nil {
+				resp.Error = err.Error()
+				return resp
+			}
+			r = agentproto.Response{ID: req.ID, OK: true, Output: "Initialized " + appDef.Name + " at " + docroot}
+		}
+		if username != "" {
+			if err := agentproto.ValidateLinuxUsername(username); err == nil {
+				_ = exec.Command("chown", "-R", username+":"+username, docroot).Run()
+			}
+		}
+		return r
 
 	case agentproto.CmdRedisCreate:
 		name, _ := req.Args["name"].(string)
