@@ -247,6 +247,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.requireAuth(s.handleDeleteNode))
 	mux.HandleFunc("POST /api/v1/import", s.requireAuth(s.handlePanelImport))
 
+	// Security Incident Response, Backup Download, Billing SSO
+	mux.HandleFunc("POST /api/v1/security/rotate-keys", s.requireAuth(s.handleRotateKeys))
+	mux.HandleFunc("GET /api/v1/security/forensics", s.requireAuth(s.handleExportForensics))
+	mux.HandleFunc("GET /api/v1/backups/{id}/download", s.requireAuth(s.handleDownloadBackup))
+	mux.HandleFunc("POST /api/v1/billing/sso", s.requireAuth(s.handleBillingSSO))
+
 	// Audit, Jobs, System
 	mux.HandleFunc("GET /api/v1/audit", s.requireAuth(s.handleListAudit))
 	mux.HandleFunc("GET /api/v1/audit/verify", s.requireAuth(s.handleVerifyAudit))

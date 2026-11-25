@@ -531,3 +531,41 @@ func TestPhase6WAFGitDeployNodesAndImport(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestSecurityIncidentAndBillingSSO(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Billing SSO
+	rec = doReq(t, h, "POST", "/api/v1/billing/sso", map[string]string{"user_id": "u_user1"}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("sso_token")) {
+		t.Fatalf("billing sso = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Reauth -> rotate keys + forensics export
+	if rec := doReq(t, h, "POST", "/api/v1/auth/reauth", map[string]string{"password": "Admin-Strong-Password-123"}, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("reauth = %d", rec.Code)
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/security/rotate-keys", nil, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("rotate-keys = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/security/forensics", nil, cookies, ""); rec.Code != 200 || rec.Header().Get("X-Checksum-Sha256") == "" {
+		t.Fatalf("forensics = %d", rec.Code)
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

@@ -168,3 +168,17 @@ function stako_ChangePassword(array $params)
         return $e->getMessage();
     }
 }
+
+function stako_ServiceSingleSignOn(array $params)
+{
+    try {
+        $id = stako_findUserId($params);
+        $res = stako_api($params, 'POST', '/billing/sso', ['user_id' => $id]);
+        $host = $params['serverhostname'] ?: $params['serverip'];
+        $port = $params['serverport'] ?: 8083;
+        $scheme = $params['serversecure'] ? 'https' : 'http';
+        return ['success' => true, 'redirectTo' => "{$scheme}://{$host}:{$port}{$res['sso_url']}"];
+    } catch (Exception $e) {
+        return ['success' => false, 'errorMsg' => $e->getMessage()];
+    }
+}
