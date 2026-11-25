@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path"
 	"slices"
 	"strings"
 
@@ -285,7 +286,7 @@ func (s *Server) enqueueDomainApply(r *http.Request, actorID string, d *store.Do
 		ListenIPv4: v4, ListenIPv6: v6, ProxyTarget: d.ProxyTarget, ProxyRules: ruleData,
 	})
 	if j, err := s.jobs.Enqueue(r.Context(), "domain.apply", actorID, map[string]any{
-		"domain": d.Domain, "nginx_conf": conf,
+		"domain": d.Domain, "username": owner.Username, "docroot": d.Docroot, "nginx_conf": conf,
 	}); err == nil {
 		return &j.ID
 	}
@@ -312,6 +313,22 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
+func validateDomainDocroot(username, domain, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fmt.Sprintf("/home/%s/%s/public_html", username, domain), nil
+	}
+	if strings.ContainsAny(raw, "\n\r\t ") {
+		return "", fmt.Errorf("docroot must not contain spaces or control characters")
+	}
+	clean := path.Clean(raw)
+	prefix := "/home/" + username + "/"
+	if !strings.HasPrefix(clean, prefix) || len(clean) <= len(prefix) {
+		return "", fmt.Errorf("docroot must be inside %s", prefix)
+	}
+	return clean, nil
+}
+
 func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	if ac.User.Role == "readonly" {
@@ -324,6 +341,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		Aliases     []string `json:"aliases"`
 		Stack       string   `json:"stack"`
 		Template    string   `json:"template"`
+		Docroot     string   `json:"docroot"`
 		PHPVersion  string   `json:"php_version"`
 		SSLMode     string   `json:"ssl_mode"`
 		ForceHTTPS  *bool    `json:"force_https"`
@@ -393,11 +411,18 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	docroot, err := validateDomainDocroot(owner.Username, req.Domain, req.Docroot)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid docroot", err.Error(),
+			FieldError{Field: "docroot", Message: err.Error()})
+		return
+	}
+
 	id, _ := crypto.RandomID("d")
 	d := &store.Domain{
 		ID: id, UserID: owner.ID, Domain: req.Domain, Aliases: req.Aliases,
 		Stack: req.Stack, Template: req.Template,
-		Docroot:    fmt.Sprintf("/home/%s/web/%s/public_html", owner.Username, req.Domain),
+		Docroot:    docroot,
 		PHPVersion: req.PHPVersion, SSLEnabled: req.SSLMode == "letsencrypt", SSLMode: req.SSLMode,
 		ForceHTTPS: forceHTTPS, HSTS: req.HSTS, IPv4ID: req.IPv4ID, IPv6ID: req.IPv6ID,
 		ProxyTarget: req.ProxyTarget, Status: "active",
@@ -444,6 +469,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		Aliases     []string `json:"aliases"`
 		Stack       *string  `json:"stack"`
 		Template    *string  `json:"template"`
+		Docroot     *string  `json:"docroot"`
 		PHPVersion  *string  `json:"php_version"`
 		ForceHTTPS  *bool    `json:"force_https"`
 		HSTS        *bool    `json:"hsts"`
@@ -496,11 +522,20 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		d.ProxyTarget = *req.ProxyTarget
 	}
+	owner, _ := s.store.GetUserByID(r.Context(), d.UserID)
+	if req.Docroot != nil {
+		dr, err := validateDomainDocroot(owner.Username, d.Domain, *req.Docroot)
+		if err != nil {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid docroot", err.Error(),
+				FieldError{Field: "docroot", Message: err.Error()})
+			return
+		}
+		d.Docroot = dr
+	}
 	if err := s.store.UpdateDomain(r.Context(), d); err != nil {
 		handleStoreErr(w, err)
 		return
 	}
-	owner, _ := s.store.GetUserByID(r.Context(), d.UserID)
 	jobID := s.enqueueDomainApply(r, ac.User.ID, d, owner)
 	s.audit(r, ac.User, "domain.update", "domain", d.ID, "success", nil)
 	WriteJSON(w, http.StatusOK, map[string]any{"domain": d, "job_id": jobID})

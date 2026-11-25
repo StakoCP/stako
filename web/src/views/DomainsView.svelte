@@ -39,6 +39,7 @@
   let fAliases = $state('');
   let fStack = $state<DomainStack>('nginx');
   let fTemplate = $state<DomainTemplate>('php');
+  let fDocroot = $state('');
   let fPhpVersion = $state('8.3');
   let fSslMode = $state<DomainSSLMode>('none');
   let fForceHttps = $state(false);
@@ -48,6 +49,10 @@
   let fProxyTarget = $state('');
   let formError = $state('');
   let saving = $state(false);
+
+  let selectedUsername = $derived(
+    users.find((u) => u.id === fUserId)?.username ?? auth.user?.username ?? 'user'
+  );
 
   // Proxy rules modal
   let proxyModalDomain = $state<Domain | null>(null);
@@ -132,6 +137,7 @@
     fAliases = '';
     fStack = 'nginx';
     fTemplate = 'php';
+    fDocroot = '';
     fPhpVersion = '8.3';
     fSslMode = 'none';
     fForceHttps = false;
@@ -150,6 +156,7 @@
     fAliases = d.aliases.join(', ');
     fStack = d.stack;
     fTemplate = d.template;
+    fDocroot = d.docroot || '';
     fPhpVersion = d.php_version || '8.3';
     fSslMode = d.ssl_mode;
     fForceHttps = d.force_https;
@@ -182,6 +189,9 @@
           ipv4_id: fIpv4Id || null,
           ipv6_id: fIpv6Id || null,
         };
+        if (fDocroot.trim()) {
+          body.docroot = fDocroot.trim();
+        }
         if (fTemplate === 'proxy') {
           body.proxy_target = fProxyTarget.trim();
         }
@@ -202,6 +212,7 @@
           hsts: fHsts,
         };
         if (canSelectOwner && fUserId) body.user_id = fUserId;
+        if (fDocroot.trim()) body.docroot = fDocroot.trim();
         if (fIpv4Id) body.ipv4_id = fIpv4Id;
         if (fIpv6Id) body.ipv6_id = fIpv6Id;
         if (fTemplate === 'proxy' && fProxyTarget.trim()) {
@@ -368,6 +379,9 @@
               {#if d.aliases.length > 0}
                 <div class="form-hint">{d.aliases.join(', ')}</div>
               {/if}
+              {#if d.docroot}
+                <div class="form-hint">{d.docroot}</div>
+              {/if}
             </td>
             <td><span class="badge badge-primary">{d.stack}</span></td>
             <td class="mono">{d.template}</td>
@@ -475,6 +489,18 @@
         bind:value={fAliases}
         placeholder="www.example.com, app.example.com"
       />
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="d-docroot">{i18n.t.domains.docroot}</label>
+      <input
+        id="d-docroot"
+        type="text"
+        class="form-control"
+        bind:value={fDocroot}
+        placeholder={`/home/${selectedUsername}/${fDomain.trim() || 'example.com'}/public_html`}
+      />
+      <div class="form-hint">{i18n.t.domains.docrootHint}</div>
     </div>
 
     <div class="form-row">

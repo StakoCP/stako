@@ -320,8 +320,8 @@ func (s *Store) UpdateDomain(ctx context.Context, d *Domain) error {
 	d.UpdatedAt = time.Now().UTC()
 	aliasesJSON, _ := json.Marshal(d.Aliases)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE domains SET aliases=?, stack=?, template=?, php_version=?, ssl_enabled=?, ssl_mode=?, force_https=?, hsts=?, ipv4_id=?, ipv6_id=?, proxy_target=?, status=?, updated_at=? WHERE id=?`,
-		string(aliasesJSON), d.Stack, d.Template, d.PHPVersion, boolInt(d.SSLEnabled), d.SSLMode, boolInt(d.ForceHTTPS), boolInt(d.HSTS),
+		`UPDATE domains SET aliases=?, stack=?, template=?, docroot=?, php_version=?, ssl_enabled=?, ssl_mode=?, force_https=?, hsts=?, ipv4_id=?, ipv6_id=?, proxy_target=?, status=?, updated_at=? WHERE id=?`,
+		string(aliasesJSON), d.Stack, d.Template, d.Docroot, d.PHPVersion, boolInt(d.SSLEnabled), d.SSLMode, boolInt(d.ForceHTTPS), boolInt(d.HSTS),
 		d.IPv4ID, d.IPv6ID, d.ProxyTarget, d.Status, formatTime(d.UpdatedAt), d.ID,
 	)
 	if err != nil {

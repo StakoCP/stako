@@ -181,11 +181,11 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		t.Fatalf("impersonate = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Create domain as alice (acting_as)
+	// Create domain as alice (acting_as) -> default docroot /home/alice/alice.example.com/public_html
 	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{
 		"domain": "alice.example.com", "template": "proxy", "proxy_target": "127.0.0.1:3000",
 	}, cookies, csrf)
-	if rec.Code != 201 {
+	if rec.Code != 201 || !bytes.Contains(rec.Body.Bytes(), []byte("/home/alice/alice.example.com/public_html")) {
 		t.Fatalf("create domain = %d: %s", rec.Code, rec.Body.String())
 	}
 	var domResp struct {
@@ -194,6 +194,13 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		} `json:"domain"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &domResp)
+	// Reject docroot outside /home/alice/
+	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{
+		"domain": "bad.example.com", "docroot": "/etc/nginx",
+	}, cookies, csrf)
+	if rec.Code != 422 {
+		t.Fatalf("expected 422 for outside docroot, got %d", rec.Code)
+	}
 
 	// Add proxy rule
 	if rec := doReq(t, h, "POST", "/api/v1/domains/"+domResp.Domain.ID+"/proxy-rules", map[string]any{

@@ -181,6 +181,8 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 
 	case agentproto.CmdDomainApply:
 		domain, _ := req.Args["domain"].(string)
+		username, _ := req.Args["username"].(string)
+		docroot, _ := req.Args["docroot"].(string)
 		conf, _ := req.Args["nginx_conf"].(string)
 		if err := agentproto.ValidateDomain(domain); err != nil {
 			resp.Error = err.Error()
@@ -189,6 +191,13 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		if dryRun {
 			return runExec(resp, dryRun, logger, "nginx", "-t", "# write /etc/nginx/sites-enabled/"+domain+".conf")
 		}
+		if docroot != "" {
+			_ = os.MkdirAll(docroot, 0o750)
+			if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+				_ = exec.Command("chown", "-R", username+":www-data", filepath.Dir(docroot)).Run()
+			}
+		}
+		_ = os.MkdirAll("/var/www/acme", 0o755)
 		confPath := "/etc/nginx/sites-enabled/" + domain + ".conf"
 		if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
 			resp.Error = err.Error()
