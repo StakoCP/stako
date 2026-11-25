@@ -188,13 +188,13 @@ func (s *Store) seedDefaultPackages() error {
 		{
 			ID: "p_basic", Name: "Basic", DiskMB: 10240, BandwidthMB: -1,
 			Domains: 5, Databases: 5, MailAccounts: 10, FTPAccounts: 2, Containers: 2,
-			CPUPercent: 100, MemoryMB: 1024, ShellAccess: false, PHPVersions: []string{"8.3"},
+			CPUPercent: 100, MemoryMB: 1024, ShellAccess: false, PHPVersions: []string{"8.4"},
 			CreatedAt: now, UpdatedAt: now,
 		},
 		{
 			ID: "p_standard", Name: "Standard", DiskMB: 51200, BandwidthMB: -1,
 			Domains: 25, Databases: 25, MailAccounts: 50, FTPAccounts: 10, Containers: 10,
-			CPUPercent: 200, MemoryMB: 4096, ShellAccess: true, PHPVersions: []string{"8.2", "8.3"},
+			CPUPercent: 200, MemoryMB: 4096, ShellAccess: true, PHPVersions: []string{"8.3", "8.4", "8.5"},
 			CreatedAt: now, UpdatedAt: now,
 		},
 	}

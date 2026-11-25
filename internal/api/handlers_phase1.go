@@ -374,7 +374,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.PHPVersion == "" {
-		req.PHPVersion = "8.3"
+		req.PHPVersion = "8.4"
 	}
 	if req.SSLMode == "" {
 		req.SSLMode = "none"
