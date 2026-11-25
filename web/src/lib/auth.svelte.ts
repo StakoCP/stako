@@ -1,15 +1,28 @@
 import { api, registerUnauthenticatedHandler, setCsrfToken } from './api';
 import { router } from './router.svelte';
-import type { AuthMeResponse, ImpersonateResponse, LoginResponse, User } from './types';
+import type { AuthMeResponse, ImpersonateResponse, LoginResponse, SystemCapabilities, User } from './types';
+
+const defaultCapabilities: SystemCapabilities = {
+  web: true,
+  dns: true,
+  docker: true,
+  databases: true,
+  redis_rabbitmq: true,
+  ftp: true,
+  mail: true,
+  firewall: true,
+};
 
 let user = $state<User | null>(null);
 let impersonator = $state<User | null>(null);
+let capabilities = $state<SystemCapabilities>({ ...defaultCapabilities });
 let twoFactorRequired = $state(false);
 let initialized = $state(false);
 
 registerUnauthenticatedHandler(() => {
   user = null;
   impersonator = null;
+  capabilities = { ...defaultCapabilities };
   twoFactorRequired = false;
   setCsrfToken('');
 });
@@ -20,6 +33,9 @@ export const auth = {
   },
   get impersonator(): User | null {
     return impersonator;
+  },
+  get capabilities(): SystemCapabilities {
+    return capabilities;
   },
   get twoFactorRequired(): boolean {
     return twoFactorRequired;
@@ -32,11 +48,13 @@ export const auth = {
       const me = await api.get<AuthMeResponse>('/auth/me', { skipAuthRedirect: true });
       user = me.user;
       impersonator = me.impersonator ?? null;
+      if (me.capabilities) capabilities = me.capabilities;
       twoFactorRequired = me.two_factor_required;
       setCsrfToken(me.csrf_token);
     } catch {
       user = null;
       impersonator = null;
+      capabilities = { ...defaultCapabilities };
       twoFactorRequired = false;
       setCsrfToken('');
     } finally {
@@ -47,6 +65,7 @@ export const auth = {
     const me = await api.get<AuthMeResponse>('/auth/me');
     user = me.user;
     impersonator = me.impersonator ?? null;
+    if (me.capabilities) capabilities = me.capabilities;
     twoFactorRequired = me.two_factor_required;
     setCsrfToken(me.csrf_token);
   },

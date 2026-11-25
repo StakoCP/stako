@@ -147,6 +147,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"impersonator":        ac.Impersonator,
 		"csrf_token":          csrf,
 		"two_factor_required": twoFactorRequired,
+		"capabilities":        s.getCapabilities(r.Context()),
 	})
 }
 

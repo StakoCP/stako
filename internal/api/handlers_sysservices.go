@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"slices"
 
@@ -56,6 +57,44 @@ func findManagedService(id string) (managedServiceSpec, bool) {
 		}
 	}
 	return managedServiceSpec{}, false
+}
+
+func (s *Server) getCapabilities(ctx context.Context) map[string]bool {
+	caps := map[string]bool{
+		"web": true, "dns": true, "docker": true, "databases": true,
+		"redis_rabbitmq": true, "ftp": true, "mail": true, "firewall": true,
+	}
+	specs := make([]map[string]string, 0, len(managedServices))
+	for _, m := range managedServices {
+		specs = append(specs, map[string]string{"id": m.ID, "unit": m.Unit, "apt_pkg": m.AptPkg})
+	}
+	resp, err := s.agent.Call(ctx, agentproto.CmdSysServiceList, map[string]any{"services": specs})
+	if err != nil || !resp.OK {
+		return caps
+	}
+	rawMap, ok := resp.Data["services"].(map[string]any)
+	if !ok {
+		return caps
+	}
+	has := func(ids ...string) bool {
+		for _, id := range ids {
+			if m, ok := rawMap[id].(map[string]any); ok {
+				if inst, _ := m["installed"].(bool); inst {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	caps["web"] = has("nginx", "apache2")
+	caps["dns"] = has("powerdns", "bind9")
+	caps["docker"] = has("docker")
+	caps["databases"] = has("mariadb", "postgresql")
+	caps["redis_rabbitmq"] = has("redis", "rabbitmq")
+	caps["ftp"] = has("proftpd")
+	caps["mail"] = has("postfix", "dovecot")
+	caps["firewall"] = has("nftables", "fail2ban")
+	return caps
 }
 
 func (s *Server) handleListSysServices(w http.ResponseWriter, r *http.Request) {

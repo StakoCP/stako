@@ -124,11 +124,23 @@ export interface PaginatedResponse<T> {
   total: number;
 }
 
+export interface SystemCapabilities {
+  web: boolean;
+  dns: boolean;
+  docker: boolean;
+  databases: boolean;
+  redis_rabbitmq: boolean;
+  ftp: boolean;
+  mail: boolean;
+  firewall: boolean;
+}
+
 export interface AuthMeResponse {
   user: User;
   impersonator?: User | null;
   csrf_token: string;
   two_factor_required: boolean;
+  capabilities?: SystemCapabilities;
 }
 
 export interface LoginResponse {

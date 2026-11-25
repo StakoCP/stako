@@ -6,7 +6,7 @@
   import { router } from '../lib/router.svelte';
   import { themeStore } from '../lib/theme.svelte';
   import { toast } from '../lib/toast.svelte';
-  import type { UserRole } from '../lib/types';
+  import type { SystemCapabilities, UserRole } from '../lib/types';
 
   interface Props {
     children: Snippet;
@@ -21,6 +21,7 @@
     label: () => string;
     activeNames: string[];
     roles: UserRole[];
+    capability?: keyof SystemCapabilities;
   }
 
   interface NavGroup {
@@ -75,12 +76,14 @@
           label: () => i18n.t.nav.domains,
           activeNames: ['domains'],
           roles: ['admin', 'reseller', 'user', 'readonly'],
+          capability: 'web',
         },
         {
           path: '/dns',
           label: () => i18n.t.nav.dns,
           activeNames: ['dns'],
           roles: ['admin', 'reseller', 'user', 'readonly'],
+          capability: 'dns',
         },
         {
           path: '/apps',
@@ -99,6 +102,7 @@
           label: () => i18n.t.nav.docker,
           activeNames: ['docker'],
           roles: ['admin', 'reseller', 'user', 'readonly'],
+          capability: 'docker',
         },
         {
           path: '/catalog',
@@ -117,18 +121,21 @@
           label: () => i18n.t.nav.databases,
           activeNames: ['databases'],
           roles: ['admin', 'reseller', 'user', 'readonly'],
+          capability: 'databases',
         },
         {
           path: '/services',
           label: () => i18n.t.nav.services,
           activeNames: ['services'],
           roles: ['admin', 'reseller', 'user', 'readonly'],
+          capability: 'redis_rabbitmq',
         },
         {
           path: '/ftp',
           label: () => i18n.t.nav.ftp,
           activeNames: ['ftp'],
           roles: ['admin', 'reseller', 'user', 'readonly'],
+          capability: 'ftp',
         },
         {
           path: '/files',
@@ -141,6 +148,7 @@
           label: () => i18n.t.nav.mail,
           activeNames: ['mail'],
           roles: ['admin', 'reseller', 'user', 'readonly'],
+          capability: 'mail',
         },
         {
           path: '/cron',
@@ -171,6 +179,7 @@
           label: () => i18n.t.nav.firewall,
           activeNames: ['firewall'],
           roles: ['admin'],
+          capability: 'firewall',
         },
         {
           path: '/security',
@@ -240,7 +249,12 @@
     navGroups
       .map((g) => ({
         ...g,
-        items: g.items.filter((item) => auth.user && item.roles.includes(auth.user.role)),
+        items: g.items.filter(
+          (item) =>
+            auth.user &&
+            item.roles.includes(auth.user.role) &&
+            (!item.capability || auth.capabilities[item.capability])
+        ),
       }))
       .filter((g) => g.items.length > 0)
   );
