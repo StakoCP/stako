@@ -238,7 +238,7 @@ install_stako_binaries() {
 
   local tmp
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  trap 'rm -rf "${tmp:-}"' EXIT RETURN
 
   if curl -fsSL "$base_url/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
     local ok=1
