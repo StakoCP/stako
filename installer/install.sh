@@ -273,9 +273,9 @@ install_stako_binaries() {
 
   git clone --depth 1 "https://github.com/$REPO.git" "$tmp/src"
   (cd "$tmp/src/web" && npm ci && npm run build)
-  (cd "$tmp/src" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/stako-core ./cmd/stako-core)
-  (cd "$tmp/src" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/stako-agent ./cmd/stako-agent)
-  (cd "$tmp/src" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/stako ./cmd/stako)
+  (cd "$tmp/src" && CGO_ENABLED=0 go build -o /usr/local/bin/stako-core ./cmd/stako-core)
+  (cd "$tmp/src" && CGO_ENABLED=0 go build -o /usr/local/bin/stako-agent ./cmd/stako-agent)
+  (cd "$tmp/src" && CGO_ENABLED=0 go build -o /usr/local/bin/stako ./cmd/stako)
   chmod 0755 /usr/local/bin/stako-core /usr/local/bin/stako-agent /usr/local/bin/stako
 }
 
@@ -288,7 +288,7 @@ apply_hardening_and_systemd() {
 
   id -u stako >/dev/null 2>&1 || useradd --system --home-dir /var/lib/stako --create-home --shell /usr/sbin/nologin stako
   install -d -m 0750 -o stako -g stako /var/lib/stako
-  install -d -m 0700 -o root -g root /etc/stako/keys
+  install -d -m 0700 -o stako -g stako /etc/stako/keys
   install -d -m 0750 -o root -g stako /etc/stako
   install -d -m 0755 /var/www/acme /var/backups/stako
 
@@ -357,7 +357,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/var/lib/stako /run/stako
+ReadWritePaths=/var/lib/stako /run/stako /etc/stako/keys
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
@@ -366,6 +366,11 @@ WantedBy=multi-user.target
 UNIT
 
   systemctl daemon-reload
+  if [[ ! -f /var/lib/stako/stako.db ]]; then
+    log "Bootstrapping initial admin user..."
+    stako-core bootstrap-admin --db /var/lib/stako/stako.db || true
+    chown -R stako:stako /var/lib/stako
+  fi
   systemctl enable --now nftables fail2ban auditd nginx stako-agent stako-core
 }
 
@@ -413,8 +418,6 @@ main() {
   apply_hardening_and_systemd
 
   if [[ "$DRY_RUN" -eq 0 ]]; then
-    log "Bootstrapping initial admin user..."
-    stako-core bootstrap-admin --db /var/lib/stako/stako.db
     log "Done! Panel listening on https://$(hostname -f 2>/dev/null || echo localhost):8083"
   else
     log "Dry-run complete. No system changes were made."
