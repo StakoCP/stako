@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -22,8 +24,9 @@ import (
 
 func main() {
 	sockPath := flag.String("sock", "/run/stako/agent.sock", "Unix socket path")
+	sockGroup := flag.String("sock-group", "stako", "Unix socket group for stako-core access")
 	dryRun := flag.Bool("dry-run", runtime.GOOS == "windows", "Log commands without executing")
-	allowUID := flag.Int("allow-uid", -1, "Allowed peer UID (-1 = any)")
+	allowUID := flag.Int("allow-uid", -1, "Allowed peer UID (-1 = auto stako/root)")
 	showVer := flag.Bool("version", false, "Print version")
 	flag.Parse()
 
@@ -49,7 +52,24 @@ func main() {
 		os.Exit(1)
 	}
 	defer ln.Close()
-	_ = os.Chmod(*sockPath, 0o600)
+
+	if grp, err := user.LookupGroup(*sockGroup); err == nil {
+		if gid, err := strconv.Atoi(grp.Gid); err == nil {
+			_ = os.Chown(filepath.Dir(*sockPath), 0, gid)
+			_ = os.Chmod(filepath.Dir(*sockPath), 0o750)
+			_ = os.Chown(*sockPath, 0, gid)
+			_ = os.Chmod(*sockPath, 0o660)
+		}
+	} else {
+		_ = os.Chmod(*sockPath, 0o600)
+	}
+	if *allowUID < 0 {
+		if u, err := user.Lookup(*sockGroup); err == nil {
+			if uid, err := strconv.Atoi(u.Uid); err == nil {
+				*allowUID = uid
+			}
+		}
+	}
 
 	logger.Info("stako-agent listening", "sock", *sockPath, "dry_run", *dryRun)
 
