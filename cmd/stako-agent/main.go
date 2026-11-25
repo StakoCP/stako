@@ -273,13 +273,35 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			}
 			return resp
 		}
-		out, err := exec.Command("ip", "-j", "addr").Output()
+		ifaces, err := net.Interfaces()
 		if err != nil {
 			resp.Error = err.Error()
 			return resp
 		}
+		ips := []map[string]any{}
+		for _, iface := range ifaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				ipNet, ok := addr.(*net.IPNet)
+				if !ok || ipNet.IP == nil || ipNet.IP.IsLinkLocalUnicast() || ipNet.IP.IsLinkLocalMulticast() {
+					continue
+				}
+				fam := "ipv6"
+				if ipNet.IP.To4() != nil {
+					fam = "ipv4"
+				}
+				ips = append(ips, map[string]any{
+					"ip":        ipNet.IP.String(),
+					"family":    fam,
+					"interface": iface.Name,
+				})
+			}
+		}
 		resp.OK = true
-		resp.Output = string(out)
+		resp.Data = map[string]any{"ips": ips}
 		return resp
 
 	case agentproto.CmdDBCreate:
