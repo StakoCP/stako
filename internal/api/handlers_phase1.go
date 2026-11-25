@@ -829,6 +829,21 @@ func (s *Server) encryptEnvMap(env map[string]string) ([]string, string) {
 	return keys, enc
 }
 
+func (s *Server) decryptEnvMap(enc string) (map[string]string, error) {
+	if enc == "" {
+		return nil, nil
+	}
+	raw, err := s.enc.Decrypt(enc)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Server) handleGetApp(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	a, err := s.store.GetApp(r.Context(), r.PathValue("id"))

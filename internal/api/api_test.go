@@ -356,6 +356,31 @@ func TestPhase3DockerCatalogAndServices(t *testing.T) {
 		t.Fatalf("create container = %d: %s", rec.Code, rec.Body.String())
 	}
 
+	// Reject non-GitHub repo_url
+	rec = doReq(t, h, "POST", "/api/v1/docker/containers", map[string]any{
+		"name": "badgh", "repo_url": "https://evil.example.com/foo/bar",
+	}, cookies, csrf)
+	if rec.Code != 422 {
+		t.Fatalf("expected 422 for non-github repo_url, got %d", rec.Code)
+	}
+
+	// Create and rebuild container from GitHub
+	rec = doReq(t, h, "POST", "/api/v1/docker/containers", map[string]any{
+		"name": "ghapp", "repo_url": "https://github.com/StakoCP/sample-app", "repo_branch": "main",
+	}, cookies, csrf)
+	if rec.Code != 201 || !bytes.Contains(rec.Body.Bytes(), []byte("stako-local/ghapp:latest")) {
+		t.Fatalf("create github container = %d: %s", rec.Code, rec.Body.String())
+	}
+	var ghResp struct {
+		Container struct {
+			ID string `json:"id"`
+		} `json:"container"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &ghResp)
+	if rec := doReq(t, h, "POST", "/api/v1/docker/containers/"+ghResp.Container.ID+"/rebuild", nil, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("rebuild github container = %d: %s", rec.Code, rec.Body.String())
+	}
+
 	// Catalog has 10 apps
 	rec = doReq(t, h, "GET", "/api/v1/catalog", nil, cookies, "")
 	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("wordpress")) {

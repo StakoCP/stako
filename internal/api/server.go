@@ -161,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/docker/containers/{id}/start", s.requireAuth(s.handleContainerAction("start")))
 	mux.HandleFunc("POST /api/v1/docker/containers/{id}/stop", s.requireAuth(s.handleContainerAction("stop")))
 	mux.HandleFunc("POST /api/v1/docker/containers/{id}/restart", s.requireAuth(s.handleContainerAction("restart")))
+	mux.HandleFunc("POST /api/v1/docker/containers/{id}/rebuild", s.requireAuth(s.handleRebuildContainer))
 	mux.HandleFunc("DELETE /api/v1/docker/containers/{id}", s.requireAuth(s.handleDeleteContainer))
 	mux.HandleFunc("GET /api/v1/docker/containers/{id}/logs", s.requireAuth(s.handleContainerLogs))
 	mux.HandleFunc("GET /api/v1/docker/stacks", s.requireAuth(s.handleListComposeStacks))

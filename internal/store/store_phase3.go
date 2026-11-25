@@ -64,8 +64,17 @@ func (s *Store) migratePhase3() error {
 		created_at TEXT NOT NULL
 	);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE containers ADD COLUMN repo_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE containers ADD COLUMN repo_branch TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE containers ADD COLUMN dockerfile TEXT NOT NULL DEFAULT ''`,
+	} {
+		_, _ = s.db.Exec(stmt)
+	}
+	return nil
 }
 
 // --- Containers ---
@@ -77,8 +86,8 @@ func (s *Store) CreateContainer(ctx context.Context, c *Container) error {
 	pJSON, _ := json.Marshal(c.Ports)
 	vJSON, _ := json.Marshal(c.Volumes)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO containers (id, user_id, domain_id, name, image, ports, volumes, env_enc, cpu_limit, memory_mb, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		c.ID, c.UserID, c.DomainID, c.Name, c.Image, string(pJSON), string(vJSON), c.EnvEnc, c.CPULimit, c.MemoryMB, c.Status, formatTime(c.CreatedAt),
+		`INSERT INTO containers (id, user_id, domain_id, name, image, repo_url, repo_branch, dockerfile, ports, volumes, env_enc, cpu_limit, memory_mb, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.UserID, c.DomainID, c.Name, c.Image, c.RepoURL, c.RepoBranch, c.Dockerfile, string(pJSON), string(vJSON), c.EnvEnc, c.CPULimit, c.MemoryMB, c.Status, formatTime(c.CreatedAt),
 	)
 	if isUniqueErr(err) {
 		return ErrConflict
@@ -91,8 +100,8 @@ func (s *Store) GetContainer(ctx context.Context, id string) (*Container, error)
 	var domainID sql.NullString
 	var pJSON, vJSON, createdAt string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, domain_id, name, image, ports, volumes, env_enc, cpu_limit, memory_mb, status, created_at FROM containers WHERE id=?`, id,
-	).Scan(&c.ID, &c.UserID, &domainID, &c.Name, &c.Image, &pJSON, &vJSON, &c.EnvEnc, &c.CPULimit, &c.MemoryMB, &c.Status, &createdAt)
+		`SELECT id, user_id, domain_id, name, image, repo_url, repo_branch, dockerfile, ports, volumes, env_enc, cpu_limit, memory_mb, status, created_at FROM containers WHERE id=?`, id,
+	).Scan(&c.ID, &c.UserID, &domainID, &c.Name, &c.Image, &c.RepoURL, &c.RepoBranch, &c.Dockerfile, &pJSON, &vJSON, &c.EnvEnc, &c.CPULimit, &c.MemoryMB, &c.Status, &createdAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -124,7 +133,7 @@ func (s *Store) ListContainers(ctx context.Context, userID, resellerID *string, 
 		return nil, 0, err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT c.id, c.user_id, c.domain_id, c.name, c.image, c.ports, c.volumes, c.cpu_limit, c.memory_mb, c.status, c.created_at `+join+` ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
+		`SELECT c.id, c.user_id, c.domain_id, c.name, c.image, c.repo_url, c.repo_branch, c.dockerfile, c.ports, c.volumes, c.cpu_limit, c.memory_mb, c.status, c.created_at `+join+` ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...,
 	)
 	if err != nil {
@@ -136,7 +145,7 @@ func (s *Store) ListContainers(ctx context.Context, userID, resellerID *string, 
 		var c Container
 		var domainID sql.NullString
 		var pJSON, vJSON, createdAt string
-		if err := rows.Scan(&c.ID, &c.UserID, &domainID, &c.Name, &c.Image, &pJSON, &vJSON, &c.CPULimit, &c.MemoryMB, &c.Status, &createdAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.UserID, &domainID, &c.Name, &c.Image, &c.RepoURL, &c.RepoBranch, &c.Dockerfile, &pJSON, &vJSON, &c.CPULimit, &c.MemoryMB, &c.Status, &createdAt); err != nil {
 			return nil, 0, err
 		}
 		if domainID.Valid {

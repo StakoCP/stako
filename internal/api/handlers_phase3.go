@@ -54,6 +54,32 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
+func validateGitHubRepoInput(repoURL, branch, dockerfile string) (string, string, string, error) {
+	u := strings.TrimSpace(repoURL)
+	if !strings.HasPrefix(u, "https://github.com/") || strings.ContainsAny(u, " \t\n\r;&|$`\\\"'<>") {
+		return "", "", "", fmt.Errorf("repo_url must be a valid https://github.com/owner/repo URL")
+	}
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSuffix(u, ".git"), "https://github.com/"), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", "", fmt.Errorf("repo_url must include owner and repository")
+	}
+	b := strings.TrimSpace(branch)
+	if b == "" {
+		b = "main"
+	}
+	if strings.Contains(b, "..") || strings.ContainsAny(b, " \t\n\r;&|$`\\\"'<>") {
+		return "", "", "", fmt.Errorf("invalid repo_branch")
+	}
+	df := strings.TrimSpace(dockerfile)
+	if df == "" {
+		df = "Dockerfile"
+	}
+	if strings.HasPrefix(df, "/") || strings.Contains(df, "..") || strings.ContainsAny(df, " \t\n\r;&|$`\\\"'<>") {
+		return "", "", "", fmt.Errorf("invalid dockerfile path")
+	}
+	return u, b, df, nil
+}
+
 func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	if ac.User.Role == "readonly" {
@@ -61,15 +87,18 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name     string            `json:"name"`
-		Image    string            `json:"image"`
-		UserID   *string           `json:"user_id"`
-		DomainID *string           `json:"domain_id"`
-		Ports    []string          `json:"ports"`
-		Volumes  []string          `json:"volumes"`
-		Env      map[string]string `json:"env"`
-		CPULimit string            `json:"cpu_limit"`
-		MemoryMB int               `json:"memory_mb"`
+		Name       string            `json:"name"`
+		Image      string            `json:"image"`
+		RepoURL    string            `json:"repo_url"`
+		RepoBranch string            `json:"repo_branch"`
+		Dockerfile string            `json:"dockerfile"`
+		UserID     *string           `json:"user_id"`
+		DomainID   *string           `json:"domain_id"`
+		Ports      []string          `json:"ports"`
+		Volumes    []string          `json:"volumes"`
+		Env        map[string]string `json:"env"`
+		CPULimit   string            `json:"cpu_limit"`
+		MemoryMB   int               `json:"memory_mb"`
 	}
 	if err := DecodeJSON(r, &req); err != nil {
 		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
@@ -79,6 +108,18 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" || strings.ContainsAny(req.Name, " \n\r/") {
 		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid container name", "")
 		return
+	}
+	var repoURL, repoBranch, dockerfile string
+	if strings.TrimSpace(req.RepoURL) != "" {
+		var err error
+		repoURL, repoBranch, dockerfile, err = validateGitHubRepoInput(req.RepoURL, req.RepoBranch, req.Dockerfile)
+		if err != nil {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid GitHub repository", err.Error())
+			return
+		}
+		if strings.TrimSpace(req.Image) == "" {
+			req.Image = "stako-local/" + strings.ToLower(req.Name) + ":latest"
+		}
 	}
 	if err := validateContainerSecurity(req.Image, req.Volumes, ""); err != nil {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Container security policy violation", err.Error())
@@ -105,6 +146,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	id, _ := crypto.RandomID("c")
 	c := &store.Container{
 		ID: id, UserID: owner.ID, DomainID: req.DomainID, Name: req.Name, Image: req.Image,
+		RepoURL: repoURL, RepoBranch: repoBranch, Dockerfile: dockerfile,
 		Ports: req.Ports, Volumes: req.Volumes, EnvEnc: envEnc, CPULimit: req.CPULimit,
 		MemoryMB: req.MemoryMB, Status: "running",
 	}
@@ -114,12 +156,64 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "docker.run", ac.User.ID, map[string]any{
-		"username": owner.Username, "name": c.Name, "image": c.Image,
+		"username":    owner.Username,
+		"name":        c.Name,
+		"image":       c.Image,
+		"repo_url":    c.RepoURL,
+		"repo_branch": c.RepoBranch,
+		"dockerfile":  c.Dockerfile,
+		"ports":       c.Ports,
+		"cpu_limit":   c.CPULimit,
+		"memory_mb":   c.MemoryMB,
+		"env":         req.Env,
 	}); err == nil {
 		jobID = &j.ID
 	}
-	s.audit(r, ac.User, "docker.create", "container", c.ID, "success", map[string]any{"name": c.Name, "image": c.Image})
+	s.audit(r, ac.User, "docker.create", "container", c.ID, "success", map[string]any{
+		"name": c.Name, "image": c.Image, "repo_url": c.RepoURL,
+	})
 	WriteJSON(w, http.StatusCreated, map[string]any{"container": c, "job_id": jobID})
+}
+
+func (s *Server) handleRebuildContainer(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	c, err := s.store.GetContainer(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, c.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	if c.RepoURL == "" {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Container is not linked to a GitHub repository", "")
+		return
+	}
+	owner, _ := s.store.GetUserByID(r.Context(), c.UserID)
+	envMap, _ := s.decryptEnvMap(c.EnvEnc)
+	var jobID *string
+	if j, err := s.jobs.Enqueue(r.Context(), "docker.run", ac.User.ID, map[string]any{
+		"username":    owner.Username,
+		"name":        c.Name,
+		"image":       c.Image,
+		"repo_url":    c.RepoURL,
+		"repo_branch": c.RepoBranch,
+		"dockerfile":  c.Dockerfile,
+		"ports":       c.Ports,
+		"cpu_limit":   c.CPULimit,
+		"memory_mb":   c.MemoryMB,
+		"env":         envMap,
+	}); err == nil {
+		jobID = &j.ID
+	}
+	_ = s.store.UpdateContainerStatus(r.Context(), c.ID, "running")
+	s.audit(r, ac.User, "docker.rebuild", "container", c.ID, "success", map[string]any{"repo_url": c.RepoURL})
+	WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": jobID})
 }
 
 func (s *Server) handleContainerAction(action string) http.HandlerFunc {

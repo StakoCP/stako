@@ -37,7 +37,11 @@
   // Create container modal
   let createContainerOpen = $state(false);
   let cName = $state('');
+  let cSource = $state<'image' | 'github'>('image');
   let cImage = $state('');
+  let cRepoUrl = $state('');
+  let cRepoBranch = $state('main');
+  let cDockerfile = $state('Dockerfile');
   let cPorts = $state('');
   let cDomainId = $state('');
   let cCpuLimit = $state('1.0');
@@ -144,7 +148,11 @@
 
   function openCreateContainer() {
     cName = '';
+    cSource = 'image';
     cImage = '';
+    cRepoUrl = '';
+    cRepoBranch = 'main';
+    cDockerfile = 'Dockerfile';
     cPorts = '';
     cDomainId = '';
     cCpuLimit = '1.0';
@@ -185,10 +193,17 @@
 
       const body: Record<string, unknown> = {
         name: cName.trim(),
-        image: cImage.trim(),
         ports,
         memory_mb: Number(cMemoryMb) || 512,
       };
+      if (cSource === 'github') {
+        body.repo_url = cRepoUrl.trim();
+        body.repo_branch = cRepoBranch.trim() || 'main';
+        body.dockerfile = cDockerfile.trim() || 'Dockerfile';
+        if (cImage.trim()) body.image = cImage.trim();
+      } else {
+        body.image = cImage.trim();
+      }
       if (cCpuLimit.trim()) body.cpu_limit = cCpuLimit.trim();
       if (cDomainId) body.domain_id = cDomainId;
       if (Object.keys(env).length > 0) body.env = env;
@@ -209,6 +224,16 @@
     try {
       const res = await api.post<{ job_id: string }>(`/docker/containers/${c.id}/${action}`);
       notifyJob(fmt(i18n.t.docker.actionTriggered, { action }), res.job_id);
+      await loadContainers();
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
+  }
+
+  async function triggerRebuild(c: Container) {
+    try {
+      const res = await api.post<{ job_id: string }>(`/docker/containers/${c.id}/rebuild`);
+      notifyJob(i18n.t.docker.rebuildTriggered, res.job_id);
       await loadContainers();
     } catch (err) {
       toast.error(formatApiError(err));
@@ -362,7 +387,12 @@
           {#each containers as c (c.id)}
             <tr>
               <td class="mono"><strong>{c.name}</strong></td>
-              <td class="mono">{c.image}</td>
+              <td class="mono">
+                {c.image}
+                {#if c.repo_url}
+                  <div class="mini-list-meta">{c.repo_url}@{c.repo_branch || 'main'}</div>
+                {/if}
+              </td>
               <td class="mono">{c.ports && c.ports.length > 0 ? c.ports.join(', ') : '—'}</td>
               <td class="mono">{c.cpu_limit || '—'} CPU / {c.memory_mb} MB</td>
               <td>
@@ -397,6 +427,15 @@
                     >
                       {i18n.t.docker.restart}
                     </button>
+                    {#if c.repo_url}
+                      <button
+                        type="button"
+                        class="btn btn-sm"
+                        onclick={() => triggerRebuild(c)}
+                      >
+                        {i18n.t.docker.rebuild}
+                      </button>
+                    {/if}
                   {/if}
                   <button
                     type="button"
@@ -512,6 +551,16 @@
         />
       </div>
       <div class="form-group">
+        <label class="form-label" for="c-source">{i18n.t.docker.sourceType}</label>
+        <select id="c-source" class="form-control" bind:value={cSource}>
+          <option value="image">{i18n.t.docker.sourceImage}</option>
+          <option value="github">{i18n.t.docker.sourceGithub}</option>
+        </select>
+      </div>
+    </div>
+
+    {#if cSource === 'image'}
+      <div class="form-group">
         <label class="form-label" for="c-image">{i18n.t.docker.image}</label>
         <input
           id="c-image"
@@ -522,7 +571,41 @@
           required
         />
       </div>
-    </div>
+    {:else}
+      <div class="form-group">
+        <label class="form-label" for="c-repo-url">{i18n.t.docker.repoUrl}</label>
+        <input
+          id="c-repo-url"
+          type="url"
+          class="form-control mono"
+          bind:value={cRepoUrl}
+          placeholder={i18n.t.docker.repoUrlPlaceholder}
+          required
+        />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="c-repo-branch">{i18n.t.docker.repoBranch}</label>
+          <input
+            id="c-repo-branch"
+            type="text"
+            class="form-control mono"
+            bind:value={cRepoBranch}
+            placeholder="main"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="c-dockerfile">{i18n.t.docker.dockerfile}</label>
+          <input
+            id="c-dockerfile"
+            type="text"
+            class="form-control mono"
+            bind:value={cDockerfile}
+            placeholder="Dockerfile"
+          />
+        </div>
+      </div>
+    {/if}
 
     <div class="form-row">
       <div class="form-group">

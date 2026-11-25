@@ -478,7 +478,67 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		username, _ := req.Args["username"].(string)
 		name, _ := req.Args["name"].(string)
 		image, _ := req.Args["image"].(string)
-		return runExec(resp, dryRun, logger, "sudo", "-u", username, "docker", "run", "-d", "--name", name, "--security-opt", "no-new-privileges", "--cap-drop=ALL", image)
+		repoURL, _ := req.Args["repo_url"].(string)
+		branch, _ := req.Args["repo_branch"].(string)
+		dockerfile, _ := req.Args["dockerfile"].(string)
+		cpuLimit, _ := req.Args["cpu_limit"].(string)
+		if branch == "" {
+			branch = "main"
+		}
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		if repoURL != "" {
+			buildDir := fmt.Sprintf("/home/%s/.stako-docker/%s", username, name)
+			if dryRun {
+				return runExec(resp, dryRun, logger, "docker", "build+run", repoURL+"@"+branch, image)
+			}
+			_ = os.MkdirAll(filepath.Dir(buildDir), 0o750)
+			_ = exec.Command("chown", username+":"+username, filepath.Dir(buildDir)).Run()
+			if _, err := os.Stat(filepath.Join(buildDir, ".git")); err == nil {
+				if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "-C", buildDir, "fetch", "origin", branch); !r.OK {
+					return r
+				}
+				if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "-C", buildDir, "checkout", "-f", branch); !r.OK {
+					return r
+				}
+				if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "-C", buildDir, "reset", "--hard", "origin/"+branch); !r.OK {
+					return r
+				}
+			} else {
+				if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "clone", "--depth", "1", "-b", branch, repoURL, buildDir); !r.OK {
+					return r
+				}
+			}
+			dfPath := filepath.Join(buildDir, dockerfile)
+			if r := runExec(resp, false, logger, "sudo", "-u", username, "docker", "build", "-t", image, "-f", dfPath, buildDir); !r.OK {
+				return r
+			}
+			_ = exec.Command("sudo", "-u", username, "docker", "rm", "-f", name).Run()
+		}
+		args := []string{"-u", username, "docker", "run", "-d", "--name", name, "--restart", "unless-stopped", "--security-opt", "no-new-privileges", "--cap-drop=ALL"}
+		if cpuLimit != "" {
+			args = append(args, "--cpus", cpuLimit)
+		}
+		if memF, ok := req.Args["memory_mb"].(float64); ok && memF > 0 {
+			args = append(args, "--memory", fmt.Sprintf("%dm", int(memF)))
+		}
+		if portsRaw, ok := req.Args["ports"].([]any); ok {
+			for _, p := range portsRaw {
+				if ps, ok := p.(string); ok && ps != "" {
+					args = append(args, "-p", ps)
+				}
+			}
+		}
+		if envMap, ok := req.Args["env"].(map[string]any); ok {
+			for k, v := range envMap {
+				if vs, ok := v.(string); ok {
+					args = append(args, "-e", k+"="+vs)
+				}
+			}
+		}
+		args = append(args, image)
+		return runExec(resp, dryRun, logger, "sudo", args...)
 
 	case agentproto.CmdDockerAction:
 		username, _ := req.Args["username"].(string)

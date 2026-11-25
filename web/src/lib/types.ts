@@ -329,6 +329,9 @@ export interface Container {
   domain_id: string | null;
   name: string;
   image: string;
+  repo_url?: string;
+  repo_branch?: string;
+  dockerfile?: string;
   ports: string[];
   volumes: string[];
   cpu_limit: string;

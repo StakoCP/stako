@@ -180,18 +180,21 @@ type SecurityFinding struct {
 }
 
 type Container struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	DomainID  *string   `json:"domain_id"`
-	Name      string    `json:"name"`
-	Image     string    `json:"image"`
-	Ports     []string  `json:"ports"`
-	Volumes   []string  `json:"volumes"`
-	EnvEnc    string    `json:"-"`
-	CPULimit  string    `json:"cpu_limit"`
-	MemoryMB  int       `json:"memory_mb"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	DomainID   *string   `json:"domain_id"`
+	Name       string    `json:"name"`
+	Image      string    `json:"image"`
+	RepoURL    string    `json:"repo_url,omitempty"`
+	RepoBranch string    `json:"repo_branch,omitempty"`
+	Dockerfile string    `json:"dockerfile,omitempty"`
+	Ports      []string  `json:"ports"`
+	Volumes    []string  `json:"volumes"`
+	EnvEnc     string    `json:"-"`
+	CPULimit   string    `json:"cpu_limit"`
+	MemoryMB   int       `json:"memory_mb"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type ComposeStack struct {
