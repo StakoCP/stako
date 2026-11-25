@@ -615,7 +615,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		if dryRun {
 			return runExec(resp, true, logger, "bash", "/usr/local/share/stako/install.sh", "--update", "--version", ver)
 		}
-		return runExec(resp, false, logger, "bash", "-c", "curl -fsSL https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh | bash -s -- --update --version "+ver)
+		return runExec(resp, false, logger, "bash", "-c", "curl -fsSL https://raw.githubusercontent.com/StakoCP/stako/refs/heads/main/installer/install.sh | bash -s -- --update --version "+ver)
 
 	default:
 		logger.Warn("rejected unknown command", "command", req.Command)

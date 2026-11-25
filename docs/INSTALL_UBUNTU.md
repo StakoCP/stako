@@ -57,7 +57,7 @@ Installer cerdas (`installer/install.sh`) akan:
 
 ```bash
 # 1. Unduh skrip installer
-curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh
+curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/refs/heads/main/installer/install.sh
 
 # 2. (Opsional) Simulasi terlebih dahulu tanpa mengubah sistem
 sudo bash install.sh --dry-run --preset standard
@@ -183,7 +183,7 @@ Untuk memperbarui Stako ke rilis terbaru **tanpa menghapus database, master key,
 ### Melalui CLI / Terminal VPS
 ```bash
 # Menggunakan skrip installer mode --update
-curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh
+curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/refs/heads/main/installer/install.sh
 sudo bash install.sh --update
 
 # Atau dari folder dist/ lokal:

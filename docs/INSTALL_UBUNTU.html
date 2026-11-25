@@ -169,7 +169,7 @@ sudo apt-get update &amp;&amp; sudo apt-get upgrade -y</code></pre>
     <h3>Opsi A — Instalasi Otomatis dari GitHub Releases (Rekomendasi)</h3>
     <p>Installer cerdas (<code>installer/install.sh</code>) menjalankan <code>apt-get update &amp;&amp; upgrade</code>, menambahkan repo resmi (PHP 8.4/8.5, NodeSource 22.x, Docker CE), memeriksa versi tiap paket (menghapus versi lama yang tidak kompatibel lalu memasang versi yang sesuai), memverifikasi checksum binary Stako, menerapkan hardening baseline OS, dan menyalakan layanan <code>systemd</code>.</p>
     <pre><code># 1. Unduh skrip installer
-curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh
+curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/refs/heads/main/installer/install.sh
 
 # 2. (Opsional) Simulasi rencana instalasi tanpa mengubah sistem
 sudo bash install.sh --dry-run --preset standard
