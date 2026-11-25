@@ -26,9 +26,9 @@ jobs:
         run: |
           mkdir -p dist
           for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" -o dist/stako-core-linux-$arch ./cmd/stako-core
-            GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" -o dist/stako-agent-linux-$arch ./cmd/stako-agent
-            GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" -o dist/stako-linux-$arch ./cmd/stako
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o dist/stako-core-linux-$arch ./cmd/stako-core
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o dist/stako-agent-linux-$arch ./cmd/stako-agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o dist/stako-linux-$arch ./cmd/stako
           done
           (cd dist && sha256sum * > SHA256SUMS)
       - uses: softprops/action-gh-release@v2
