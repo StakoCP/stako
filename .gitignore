@@ -1,0 +1,20 @@
+# Binaries & build artifacts
+/dist/
+/stako-core
+/stako-agent
+/stako
+*.exe
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.key
+*.crt
+
+# Node
+web/node_modules/
+web/.astro/
+web/dist/*
+!web/dist/.gitkeep
+
+docs/PRD.md

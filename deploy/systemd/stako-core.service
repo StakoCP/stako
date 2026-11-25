@@ -1,0 +1,24 @@
+[Unit]
+Description=Stako Control Panel Core API & Web UI
+After=network.target stako-agent.service
+Requires=stako-agent.service
+
+[Service]
+Type=simple
+User=stako
+Group=stako
+ExecStart=/usr/local/bin/stako-core serve --listen :8083 --db /var/lib/stako/stako.db --master-key /etc/stako/keys/master.key --agent-sock /run/stako/agent.sock
+Restart=on-failure
+RestartSec=3
+
+# Systemd sandboxing (SEC-A21)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/stako /run/stako
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

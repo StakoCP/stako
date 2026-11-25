@@ -1,0 +1,15 @@
+# Managed by Stako. Do not edit manually.
+[{{ .Username }}]
+user = {{ .Username }}
+group = {{ .Username }}
+listen = /run/php/php{{ .PHPVersion }}-fpm-{{ .Username }}.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+pm = ondemand
+pm.max_children = 10
+pm.process_idle_timeout = 10s
+
+php_admin_value[open_basedir] = /home/{{ .Username }}/:/tmp/
+php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen

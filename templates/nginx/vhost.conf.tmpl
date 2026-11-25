@@ -1,0 +1,103 @@
+# Managed by Stako. Do not edit manually.
+server {
+    {{- if .ListenIPv4 }}
+    listen {{ .ListenIPv4 }}:80;
+    {{- else }}
+    listen 80;
+    {{- end }}
+    {{- if .ListenIPv6 }}
+    listen [{{ .ListenIPv6 }}]:80;
+    {{- end }}
+    server_name {{ .Domain }}{{ range .Aliases }} {{ . }}{{ end }};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/acme;
+    }
+
+    {{- if and .SSLEnabled .ForceHTTPS }}
+    location / {
+        return 301 https://$host$request_uri;
+    }
+    {{- else }}
+    {{- template "site_body" . }}
+    {{- end }}
+}
+{{ if .SSLEnabled }}
+server {
+    {{- if .ListenIPv4 }}
+    listen {{ .ListenIPv4 }}:443 ssl http2;
+    {{- else }}
+    listen 443 ssl http2;
+    {{- end }}
+    {{- if .ListenIPv6 }}
+    listen [{{ .ListenIPv6 }}]:443 ssl http2;
+    {{- end }}
+    server_name {{ .Domain }}{{ range .Aliases }} {{ . }}{{ end }};
+
+    ssl_certificate {{ .SSLCertPath }};
+    ssl_certificate_key {{ .SSLKeyPath }};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    {{- if .HSTS }}
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    {{- end }}
+
+    {{- template "site_body" . }}
+}
+{{ end }}
+
+{{ define "site_body" }}
+    root {{ .Docroot }};
+    index index.php index.html;
+
+    access_log /var/log/nginx/{{ .Domain }}.access.log;
+    error_log  /var/log/nginx/{{ .Domain }}.error.log;
+
+    {{- range .ProxyRules }}
+    location {{ .Path }} {
+        proxy_pass http://{{ .Upstream }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        {{- if .WebSocket }}
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        {{- end }}
+        {{- if .SSE }}
+        proxy_buffering off;
+        proxy_cache off;
+        {{- end }}
+    }
+    {{- end }}
+
+    {{- if eq .Template "proxy" }}
+    location / {
+        proxy_pass http://{{ .ProxyTarget }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+    {{- else if eq .Template "spa" }}
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    {{- else if eq .Template "static" }}
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    {{- else }}
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php{{ .PHPVersion }}-fpm-{{ .Username }}.sock;
+    }
+    {{- end }}
+{{ end }}

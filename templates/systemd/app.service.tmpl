@@ -1,0 +1,23 @@
+# Managed by Stako. Do not edit manually.
+[Unit]
+Description=Stako App {{ .Name }} ({{ .Username }})
+After=network.target
+
+[Service]
+Type=simple
+User={{ .Username }}
+Group={{ .Username }}
+WorkingDirectory={{ .WorkDir }}
+Environment=PORT={{ .Port }}
+EnvironmentFile=-/etc/stako/apps/{{ .ID }}.env
+ExecStart={{ .Command }}
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths={{ .WorkDir }}
+
+[Install]
+WantedBy=multi-user.target

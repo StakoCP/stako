@@ -1,0 +1,14 @@
+[Unit]
+Description=Stako Privileged System Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/stako-agent --sock /run/stako/agent.sock
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=stako
+RuntimeDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target
