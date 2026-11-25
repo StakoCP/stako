@@ -186,8 +186,8 @@
           php_version: fPhpVersion.trim(),
           force_https: fForceHttps,
           hsts: fHsts,
-          ipv4_id: fIpv4Id || null,
-          ipv6_id: fIpv6Id || null,
+          ipv4_id: fIpv4Id,
+          ipv6_id: fIpv6Id,
         };
         if (fDocroot.trim()) {
           body.docroot = fDocroot.trim();

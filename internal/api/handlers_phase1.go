@@ -450,6 +450,20 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, d)
 }
 
+type nullableString struct {
+	Set bool
+	Val string
+}
+
+func (n *nullableString) UnmarshalJSON(b []byte) error {
+	n.Set = true
+	if string(b) == "null" {
+		n.Val = ""
+		return nil
+	}
+	return json.Unmarshal(b, &n.Val)
+}
+
 func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	if ac.User.Role == "readonly" {
@@ -466,16 +480,16 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Aliases     []string `json:"aliases"`
-		Stack       *string  `json:"stack"`
-		Template    *string  `json:"template"`
-		Docroot     *string  `json:"docroot"`
-		PHPVersion  *string  `json:"php_version"`
-		ForceHTTPS  *bool    `json:"force_https"`
-		HSTS        *bool    `json:"hsts"`
-		IPv4ID      *string  `json:"ipv4_id"`
-		IPv6ID      *string  `json:"ipv6_id"`
-		ProxyTarget *string  `json:"proxy_target"`
+		Aliases     []string       `json:"aliases"`
+		Stack       *string        `json:"stack"`
+		Template    *string        `json:"template"`
+		Docroot     *string        `json:"docroot"`
+		PHPVersion  *string        `json:"php_version"`
+		ForceHTTPS  *bool          `json:"force_https"`
+		HSTS        *bool          `json:"hsts"`
+		IPv4ID      nullableString `json:"ipv4_id"`
+		IPv6ID      nullableString `json:"ipv6_id"`
+		ProxyTarget *string        `json:"proxy_target"`
 	}
 	if err := DecodeJSON(r, &req); err != nil {
 		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
@@ -499,18 +513,20 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	if req.HSTS != nil {
 		d.HSTS = *req.HSTS
 	}
-	if req.IPv4ID != nil {
-		if *req.IPv4ID == "" {
+	if req.IPv4ID.Set {
+		if req.IPv4ID.Val == "" {
 			d.IPv4ID = nil
 		} else {
-			d.IPv4ID = req.IPv4ID
+			v := req.IPv4ID.Val
+			d.IPv4ID = &v
 		}
 	}
-	if req.IPv6ID != nil {
-		if *req.IPv6ID == "" {
+	if req.IPv6ID.Set {
+		if req.IPv6ID.Val == "" {
 			d.IPv6ID = nil
 		} else {
-			d.IPv6ID = req.IPv6ID
+			v := req.IPv6ID.Val
+			d.IPv6ID = &v
 		}
 	}
 	if req.ProxyTarget != nil {

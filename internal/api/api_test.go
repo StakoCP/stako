@@ -209,6 +209,28 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		t.Fatalf("create proxy rule = %d: %s", rec.Code, rec.Body.String())
 	}
 
+	// Set then clear ipv4_id with explicit null
+	rec = doReq(t, h, "GET", "/api/v1/ips", nil, cookies, "")
+	var ipsResp struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &ipsResp)
+	if len(ipsResp.Items) > 0 {
+		ipID := ipsResp.Items[0].ID
+		if rec := doReq(t, h, "PATCH", "/api/v1/domains/"+domResp.Domain.ID, map[string]any{
+			"ipv4_id": ipID,
+		}, cookies, csrf); rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(ipID)) {
+			t.Fatalf("set ipv4_id = %d: %s", rec.Code, rec.Body.String())
+		}
+		if rec := doReq(t, h, "PATCH", "/api/v1/domains/"+domResp.Domain.ID, map[string]any{
+			"ipv4_id": nil,
+		}, cookies, csrf); rec.Code != 200 || bytes.Contains(rec.Body.Bytes(), []byte(ipID)) {
+			t.Fatalf("clear ipv4_id with null = %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+
 	// Create Go app with encrypted env
 	rec = doReq(t, h, "POST", "/api/v1/apps", map[string]any{
 		"name": "api", "runtime": "go", "command": "./api",
