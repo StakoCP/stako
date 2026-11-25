@@ -66,6 +66,24 @@ run_cmd() {
   fi
 }
 
+apt_install_retry() {
+  local attempt=1
+  local max_attempts=3
+  while true; do
+    if DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --fix-missing "$@"; then
+      return 0
+    fi
+    if [[ "$attempt" -ge "$max_attempts" ]]; then
+      log "Error: apt-get install failed for ($*) after $max_attempts attempts"
+      return 1
+    fi
+    log "Transient apt fetch error (attempt $attempt/$max_attempts). Retrying in 5s..."
+    sleep 5
+    apt-get -o Acquire::Retries=5 update -y || true
+    attempt=$((attempt + 1))
+  done
+}
+
 # Smart package reconciler:
 # 1. If not installed -> apt-get install
 # 2. If installed but version < min_ver -> purge old/conflicting + install required version
@@ -88,7 +106,7 @@ ensure_pkg() {
       log "Package $pkg version $installed_ver < required $min_ver: removing old version and reinstalling..."
       DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y "$pkg" $conflicts || true
       DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true
-      DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+      apt_install_retry "$pkg"
     else
       log "Package $pkg ($installed_ver) already meets >= $min_ver"
     fi
@@ -102,7 +120,7 @@ ensure_pkg() {
       done
     fi
     log "Installing $pkg..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+    apt_install_retry "$pkg"
   fi
 }
 
@@ -354,9 +372,9 @@ main() {
     return 0
   fi
 
-  run_cmd apt-get update -y
+  run_cmd apt-get -o Acquire::Retries=5 update -y
   if [[ "$SKIP_UPGRADE" -eq 0 ]]; then
-    run_cmd apt-get upgrade -y
+    run_cmd apt-get -o Acquire::Retries=5 upgrade -y
   fi
   setup_repos
   install_backend_stack
