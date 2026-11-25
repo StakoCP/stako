@@ -11,7 +11,7 @@ PRESET="standard"
 DRY_RUN=0
 UPDATE_ONLY=0
 SKIP_UPGRADE=0
-VERSION="latest"
+STAKO_VERSION="latest"
 REPO="StakoCP/stako"
 ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
 case "$ARCH" in
@@ -40,7 +40,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --preset) PRESET="${2:?}"; shift 2 ;;
-    --version) VERSION="${2:?}"; shift 2 ;;
+    --version) STAKO_VERSION="${2:?}"; shift 2 ;;
     --from-dir) FROM_DIR="${2:?}"; shift 2 ;;
     --update) UPDATE_ONLY=1; shift ;;
     --with-dns) WITH_DNS="yes"; shift ;;
@@ -227,25 +227,56 @@ install_stako_binaries() {
   fi
 
   local base_url="https://github.com/$REPO/releases/latest/download"
-  if [[ "$VERSION" != "latest" ]]; then
-    base_url="https://github.com/$REPO/releases/download/$VERSION"
+  if [[ "$STAKO_VERSION" != "latest" ]]; then
+    base_url="https://github.com/$REPO/releases/download/$STAKO_VERSION"
   fi
-  log "Downloading verified Stako binaries ($VERSION, $ARCH) from $base_url..."
+  log "Downloading verified Stako binaries ($STAKO_VERSION, $ARCH) from $base_url..."
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] curl -fsSL $base_url/SHA256SUMS + binaries -> sha256sum -c -> /usr/local/bin/"
+    echo "[dry-run] curl -fsSL $base_url/SHA256SUMS + binaries -> sha256sum -c -> /usr/local/bin/ (fallback: build from source)"
     return 0
   fi
+
   local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
-  curl -fsSL "$base_url/SHA256SUMS" -o "$tmp/SHA256SUMS"
-  for bin in "stako-core-linux-$ARCH" "stako-agent-linux-$ARCH" "stako-linux-$ARCH"; do
-    curl -fsSL "$base_url/$bin" -o "$tmp/$bin"
-  done
-  (cd "$tmp" && sha256sum -c SHA256SUMS --ignore-missing)
-  install -m 0755 "$tmp/stako-core-linux-$ARCH" /usr/local/bin/stako-core
-  install -m 0755 "$tmp/stako-agent-linux-$ARCH" /usr/local/bin/stako-agent
-  install -m 0755 "$tmp/stako-linux-$ARCH" /usr/local/bin/stako
+
+  if curl -fsSL "$base_url/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
+    local ok=1
+    for bin in "stako-core-linux-$ARCH" "stako-agent-linux-$ARCH" "stako-linux-$ARCH"; do
+      if ! curl -fsSL "$base_url/$bin" -o "$tmp/$bin"; then
+        ok=0
+        break
+      fi
+    done
+    if [[ "$ok" -eq 1 ]] && (cd "$tmp" && sha256sum -c SHA256SUMS --ignore-missing); then
+      install -m 0755 "$tmp/stako-core-linux-$ARCH" /usr/local/bin/stako-core
+      install -m 0755 "$tmp/stako-agent-linux-$ARCH" /usr/local/bin/stako-agent
+      install -m 0755 "$tmp/stako-linux-$ARCH" /usr/local/bin/stako
+      return 0
+    fi
+  fi
+
+  log "No GitHub Release found for '$STAKO_VERSION'; falling back to building from source (main branch)..."
+  apt_install_retry git
+  if ! command -v node >/dev/null 2>&1; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt_install_retry nodejs
+  fi
+  local go_bin
+  go_bin="$(command -v go || true)"
+  if [[ -z "$go_bin" ]] || ! "$go_bin" version | grep -qE "go1\.(2[5-9]|[3-9][0-9])"; then
+    log "Installing Go 1.25.5 toolchain for source build..."
+    curl -fsSL "https://go.dev/dl/go1.25.5.linux-$ARCH.tar.gz" -o "$tmp/go.tar.gz"
+    tar -C "$tmp" -xzf "$tmp/go.tar.gz"
+    export PATH="$tmp/go/bin:$PATH"
+  fi
+
+  git clone --depth 1 "https://github.com/$REPO.git" "$tmp/src"
+  (cd "$tmp/src/web" && npm ci && npm run build)
+  (cd "$tmp/src" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/stako-core ./cmd/stako-core)
+  (cd "$tmp/src" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/stako-agent ./cmd/stako-agent)
+  (cd "$tmp/src" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/stako ./cmd/stako)
+  chmod 0755 /usr/local/bin/stako-core /usr/local/bin/stako-agent /usr/local/bin/stako
 }
 
 apply_hardening_and_systemd() {
@@ -285,7 +316,7 @@ SSH
 
   cat >/etc/stako/install.yml <<YML
 preset: $PRESET
-version: $VERSION
+version: $STAKO_VERSION
 dns_server: $WITH_DNS
 docker_mode: rootless
 state_db: sqlite
@@ -355,7 +386,7 @@ main() {
     exec > >(tee -a "$LOG_FILE") 2>&1
   fi
 
-  log "Stako Smart Installer starting (preset=$PRESET, version=$VERSION, arch=$ARCH, update_only=$UPDATE_ONLY)"
+  log "Stako Smart Installer starting (preset=$PRESET, version=$STAKO_VERSION, arch=$ARCH, update_only=$UPDATE_ONLY)"
 
   if [[ "$UPDATE_ONLY" -eq 1 ]]; then
     log "Running in-place Stako update (preserving /var/lib/stako, /etc/stako, and user data)..."
