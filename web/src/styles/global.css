@@ -1340,6 +1340,38 @@ progress.score-progress.score-low::-moz-progress-bar {
   overflow: hidden;
 }
 
+.file-entry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.file-icon-folder {
+  color: var(--warning, #d97706);
+}
+
+.file-icon-code {
+  color: var(--primary, #2563eb);
+}
+
+.file-icon-media {
+  color: var(--success, #16a34a);
+}
+
+.file-icon-archive {
+  color: var(--danger, #dc2626);
+}
+
+.file-icon-default {
+  color: var(--text-muted);
+}
+
 .media-preview {
   max-width: 100%;
   max-height: 480px;

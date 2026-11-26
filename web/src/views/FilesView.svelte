@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import AceEditor from '../components/AceEditor.svelte';
-  import ActionIcon from '../components/ActionIcon.svelte';
+  import ActionIcon, { type ActionIconName } from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError, getCsrfToken } from '../lib/api';
   import { auth } from '../lib/auth.svelte';
@@ -120,6 +120,26 @@
   function isArchive(name: string): boolean {
     const lower = name.toLowerCase();
     return ARCHIVE_SUFFIXES.some((s) => lower.endsWith(s));
+  }
+
+  const CODE_EXTS = new Set([
+    'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'json', 'html', 'htm', 'css', 'scss',
+    'php', 'py', 'go', 'sh', 'bash', 'yml', 'yaml', 'xml', 'sql', 'svelte', 'astro',
+    'conf', 'ini', 'env', 'toml', 'htaccess',
+  ]);
+
+  function getEntryIcon(entry: FileEntry): { name: ActionIconName; cls: string } {
+    if (entry.is_dir) return { name: 'folder', cls: 'file-icon file-icon-folder' };
+    if (isArchive(entry.name)) return { name: 'archive', cls: 'file-icon file-icon-archive' };
+    const ext = getExt(entry.name);
+    if (IMAGE_EXTS.has(ext)) return { name: 'image', cls: 'file-icon file-icon-media' };
+    if (VIDEO_EXTS.has(ext)) return { name: 'video', cls: 'file-icon file-icon-media' };
+    if (AUDIO_EXTS.has(ext)) return { name: 'audio', cls: 'file-icon file-icon-media' };
+    if (ext === 'pdf') return { name: 'pdf', cls: 'file-icon file-icon-archive' };
+    if (CODE_EXTS.has(ext) || entry.name.startsWith('.')) {
+      return { name: 'file-code', cls: 'file-icon file-icon-code' };
+    }
+    return { name: 'file', cls: 'file-icon file-icon-default' };
   }
 
   function rawUrl(path: string): string {
@@ -577,16 +597,15 @@
       {:else}
         {#each items as entry (entry.name)}
           {@const fullPath = joinPath(currentPath, entry.name)}
+          {@const iconInfo = getEntryIcon(entry)}
           <tr>
             <td>
-              <div class="table-actions">
-                {#if entry.is_dir}
-                  <span class="badge badge-info">{i18n.t.files.dirBadge}</span>
-                {/if}
-                <button type="button" class="link-btn mono" onclick={() => openFile(entry)}>
-                  {entry.name}
-                </button>
-              </div>
+              <button type="button" class="link-btn mono file-entry-btn" onclick={() => openFile(entry)}>
+                <span class={iconInfo.cls} aria-hidden="true">
+                  <ActionIcon name={iconInfo.name} />
+                </span>
+                <span>{entry.name}</span>
+              </button>
             </td>
             <td>{entry.is_dir ? '—' : formatBytes(entry.size)}</td>
             <td class="mono">{entry.octal_mode ?? entry.mode}</td>
