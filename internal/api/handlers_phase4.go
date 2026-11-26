@@ -332,6 +332,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var uid *string
+	var username string
 	if req.Kind == "user_data" {
 		owner, ok := s.resolveTargetUser(r, ac, req.UserID)
 		if !ok {
@@ -339,6 +340,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uid = &owner.ID
+		username = owner.Username
 	}
 	id, _ := crypto.RandomID("bk")
 	checksum := "sha256:" + crypto.SHA256Hex(id+req.Kind+req.Target)
@@ -352,7 +354,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "backup.run", ac.User.ID, map[string]any{
-		"id": bk.ID, "kind": bk.Kind, "target": bk.Target,
+		"id": bk.ID, "kind": bk.Kind, "target": bk.Target, "username": username,
 	}); err == nil {
 		jobID = &j.ID
 	}

@@ -3,6 +3,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -707,11 +709,52 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 	case agentproto.CmdBackupRun:
 		id, _ := req.Args["id"].(string)
 		kind, _ := req.Args["kind"].(string)
-		return runExec(resp, dryRun, logger, "restic", "backup", "--tag", id, kind)
+		username, _ := req.Args["username"].(string)
+		var candidates []string
+		if kind == "system_config" {
+			candidates = []string{"/etc/stako", "/etc/nginx/sites-enabled", "/var/lib/stako", "/etc/php"}
+		} else {
+			if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+				candidates = []string{"/home/" + username}
+			} else {
+				candidates = []string{"/home"}
+			}
+		}
+		if dryRun {
+			args := append([]string{"backup", "--tag", id}, candidates...)
+			return runExec(resp, true, logger, "restic", args...)
+		}
+		var paths []string
+		for _, p := range candidates {
+			if _, err := os.Stat(p); err == nil {
+				paths = append(paths, p)
+			}
+		}
+		if len(paths) == 0 {
+			resp.Error = "no backup source directories exist for kind: " + kind
+			return resp
+		}
+		resticArgs, err := ensureResticRepo(logger)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		args := append(resticArgs, "backup", "--tag", id, "--tag", kind)
+		args = append(args, paths...)
+		return runExec(resp, false, logger, "restic", args...)
 
 	case agentproto.CmdBackupRestore:
 		id, _ := req.Args["id"].(string)
-		return runExec(resp, dryRun, logger, "restic", "restore", id)
+		if dryRun {
+			return runExec(resp, true, logger, "restic", "restore", id)
+		}
+		resticArgs, err := ensureResticRepo(logger)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		args := append(resticArgs, "restore", "latest", "--tag", id, "--target", "/")
+		return runExec(resp, false, logger, "restic", args...)
 
 	case agentproto.CmdFileList:
 		p, _ := req.Args["path"].(string)
@@ -1063,4 +1106,39 @@ chdir = /home/%s
 	if out, err := exec.Command("systemctl", "reload-or-restart", "php"+phpVer+"-fpm").CombinedOutput(); err != nil {
 		logger.Warn("failed to reload php-fpm", "unit", "php"+phpVer+"-fpm", "err", err, "output", strings.TrimSpace(string(out)))
 	}
+}
+
+func ensureResticRepo(logger *slog.Logger) ([]string, error) {
+	repo := os.Getenv("RESTIC_REPOSITORY")
+	if repo == "" {
+		repo = "/var/backups/stako/restic-repo"
+	}
+	pwFile := os.Getenv("RESTIC_PASSWORD_FILE")
+	if pwFile == "" && os.Getenv("RESTIC_PASSWORD") == "" {
+		pwFile = "/etc/stako/restic.key"
+		if _, err := os.Stat(pwFile); os.IsNotExist(err) {
+			_ = os.MkdirAll(filepath.Dir(pwFile), 0o750)
+			buf := make([]byte, 32)
+			if _, err := rand.Read(buf); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(pwFile, []byte(hex.EncodeToString(buf)+"\n"), 0o600); err != nil {
+				return nil, fmt.Errorf("write restic key: %w", err)
+			}
+		}
+	}
+	baseArgs := []string{"-r", repo}
+	if pwFile != "" {
+		baseArgs = append(baseArgs, "--password-file", pwFile)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "config")); os.IsNotExist(err) {
+		_ = os.MkdirAll(repo, 0o750)
+		initArgs := append(append([]string{}, baseArgs...), "init")
+		out, err := exec.Command("restic", initArgs...).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("restic init failed: %v: %s", err, strings.TrimSpace(string(out)))
+		}
+		logger.Info("initialized restic backup repository", "repo", repo)
+	}
+	return baseArgs, nil
 }
