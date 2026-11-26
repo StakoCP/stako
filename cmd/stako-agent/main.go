@@ -997,10 +997,31 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			if dryRun {
 				return runExec(resp, true, logger, "docker", "run", "-d", "--name", cname, appDef.Image)
 			}
+			if appDef.RepoURL != "" {
+				buildDir := "/var/lib/stako/catalog-builds/" + slug
+				_ = os.MkdirAll(filepath.Dir(buildDir), 0o750)
+				if _, err := os.Stat(filepath.Join(buildDir, ".git")); err == nil {
+					if r := runExec(resp, false, logger, "git", "-C", buildDir, "pull", "--ff-only"); !r.OK {
+						return r
+					}
+				} else {
+					if r := runExec(resp, false, logger, "git", "clone", "--depth", "1", appDef.RepoURL, buildDir); !r.OK {
+						return r
+					}
+				}
+				if r := runExec(resp, false, logger, "docker", "build", "-t", appDef.Image, buildDir); !r.OK {
+					return r
+				}
+			}
 			_ = runExec(resp, false, logger, "docker", "rm", "-f", cname)
-			return runExec(resp, false, logger, "docker", "run", "-d", "--name", cname,
+			args := []string{
+				"run", "-d", "--name", cname,
 				"--restart", "unless-stopped", "--security-opt", "no-new-privileges", "--cap-drop=ALL",
-				"-p", fmt.Sprintf("127.0.0.1:0:%d", appDef.DefaultPort), appDef.Image)
+				"-p", fmt.Sprintf("127.0.0.1:0:%d", appDef.DefaultPort),
+				appDef.Image,
+			}
+			args = append(args, appDef.CmdArgs...)
+			return runExec(resp, false, logger, "docker", args...)
 		}
 		if docroot == "" {
 			docroot = "/var/www/" + domain + "/public_html"

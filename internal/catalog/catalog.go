@@ -2,14 +2,16 @@
 package catalog
 
 type AppManifest struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Type        string `json:"type"` // php | docker
-	Category    string `json:"category"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-	Image       string `json:"image,omitempty"`
-	DefaultPort int    `json:"default_port,omitempty"`
+	Slug        string   `json:"slug"`
+	Name        string   `json:"name"`
+	Type        string   `json:"type"` // php | docker
+	Category    string   `json:"category"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	Image       string   `json:"image,omitempty"`
+	RepoURL     string   `json:"repo_url,omitempty"`
+	CmdArgs     []string `json:"cmd_args,omitempty"`
+	DefaultPort int      `json:"default_port,omitempty"`
 }
 
 var Apps = []AppManifest{
@@ -23,6 +25,9 @@ var Apps = []AppManifest{
 	{Slug: "grafana", Name: "Grafana", Type: "docker", Category: "Analytics", Version: "11", Description: "Dashboard metrik dan observabilitas", Image: "grafana/grafana:11.3.0", DefaultPort: 3000},
 	{Slug: "vaultwarden", Name: "Vaultwarden", Type: "docker", Category: "Security", Version: "1.32", Description: "Password manager kompatibel Bitwarden", Image: "vaultwarden/server:1.32.5", DefaultPort: 80},
 	{Slug: "adminer", Name: "Adminer", Type: "php", Category: "Database", Version: "4.8.1", Description: "Manajemen database web ringan"},
+	{Slug: "hermes", Name: "Hermes Agent", Type: "docker", Category: "AI Agent", Version: "latest", Description: "Agen AI otonom dari Nous Research dengan gateway persisten", Image: "nousresearch/hermes-agent:latest", CmdArgs: []string{"gateway", "run"}, DefaultPort: 8642},
+	{Slug: "muse", Name: "Muse (OpenMuse)", Type: "docker", Category: "AI Agent", Version: "latest", Description: "Personal AI agent dengan browser persisten dan workspace terisolasi", Image: "stako-local/openmuse:latest", RepoURL: "https://github.com/CopilotKit/openmuse", DefaultPort: 3000},
+	{Slug: "9router", Name: "9Router", Type: "docker", Category: "AI Router", Version: "latest", Description: "AI API gateway dan router multi-provider untuk model LLM", Image: "decolua/9router:latest", DefaultPort: 20128},
 }
 
 func Find(slug string) (AppManifest, bool) {
