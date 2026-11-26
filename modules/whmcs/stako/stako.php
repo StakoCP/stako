@@ -182,3 +182,42 @@ function stako_ServiceSingleSignOn(array $params)
         return ['success' => false, 'errorMsg' => $e->getMessage()];
     }
 }
+
+function stako_AdminSingleSignOn(array $params)
+{
+    try {
+        $res = stako_api($params, 'POST', '/billing/sso', []);
+        $host = $params['serverhostname'] ?: $params['serverip'];
+        $port = $params['serverport'] ?: 8083;
+        $scheme = $params['serversecure'] ? 'https' : 'http';
+        return ['success' => true, 'redirectTo' => "{$scheme}://{$host}:{$port}{$res['sso_url']}"];
+    } catch (Exception $e) {
+        return ['success' => false, 'errorMsg' => $e->getMessage()];
+    }
+}
+
+function stako_UsageUpdate(array $params)
+{
+    try {
+        $res = stako_api($params, 'GET', '/billing/usage');
+        foreach ($res['items'] ?? [] as $row) {
+            if (empty($row['username'])) {
+                continue;
+            }
+            if (class_exists('\WHMCS\Database\Capsule')) {
+                \WHMCS\Database\Capsule::table('tblhosting')
+                    ->where('server', $params['serverid'])
+                    ->where('username', $row['username'])
+                    ->update([
+                        'diskusage' => (int) ($row['disk_mb'] ?? 0),
+                        'disklimit' => (int) ($row['disk_limit_mb'] ?? 0),
+                        'bwusage' => (int) ($row['bandwidth_mb'] ?? 0),
+                        'bwlimit' => (int) ($row['bandwidth_limit_mb'] ?? 0),
+                        'lastupdate' => date('Y-m-d H:i:s'),
+                    ]);
+            }
+        }
+    } catch (Exception $e) {
+        logModuleCall('stako', __FUNCTION__, $params, $e->getMessage());
+    }
+}

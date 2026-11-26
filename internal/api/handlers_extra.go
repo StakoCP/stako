@@ -106,20 +106,65 @@ func (s *Server) handleBillingSSO(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
 		return
 	}
-	target, err := s.store.GetUserByID(r.Context(), req.UserID)
-	if err != nil {
-		handleStoreErr(w, err)
-		return
-	}
-	if !canManageUser(ac.User, target) {
-		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden target user", "")
-		return
+	target := ac.User
+	if req.UserID != "" {
+		u, err := s.store.GetUserByID(r.Context(), req.UserID)
+		if err != nil {
+			handleStoreErr(w, err)
+			return
+		}
+		if !canManageUser(ac.User, u) {
+			WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden target user", "")
+			return
+		}
+		target = u
 	}
 	tok, _ := crypto.RandomHex(24)
 	s.audit(r, ac.User, "billing.sso", "user", target.ID, "success", nil)
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"sso_token": tok,
-		"sso_url":   "/#/login?sso=" + tok,
+		"sso_token":  tok,
+		"sso_url":    "/#/login?sso=" + tok,
 		"expires_in": 120,
 	})
+}
+
+// GET /api/v1/billing/usage (7.17 FR-O8: per-user resource metering for WHMCS)
+func (s *Server) handleBillingUsage(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" && ac.User.Role != "reseller" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var ownerFilter *string
+	if ac.User.Role == "reseller" {
+		ownerFilter = &ac.User.ID
+	}
+	users, _, err := s.store.ListUsers(r.Context(), ownerFilter, "", 500, 0)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(users))
+	for _, u := range users {
+		domCount, _ := s.store.CountDomainsByUser(r.Context(), u.ID)
+		diskLimit := 0
+		bwLimit := 0
+		if u.PackageID != nil {
+			if pkg, err := s.store.GetPackageByID(r.Context(), *u.PackageID); err == nil {
+				diskLimit = pkg.DiskMB
+				bwLimit = pkg.BandwidthMB
+			}
+		}
+		items = append(items, map[string]any{
+			"user_id":            u.ID,
+			"username":           u.Username,
+			"domains_used":       domCount,
+			"disk_mb":            0,
+			"disk_limit_mb":      diskLimit,
+			"bandwidth_mb":       0,
+			"bandwidth_limit_mb": bwLimit,
+			"status":             u.Status,
+		})
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 }

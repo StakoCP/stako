@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/StakoCP/stako/internal/agentclient"
@@ -28,6 +29,8 @@ type Server struct {
 	insecureHTTP bool
 	idleTimeout  time.Duration
 	absTimeout   time.Duration
+	whMu         sync.Mutex
+	whDeliveries []webhookDelivery
 }
 
 type Config struct {
@@ -62,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
 	mux.HandleFunc("GET /api/v1/openapi.json", s.handleOpenAPIJSON)
 	mux.HandleFunc("GET /api/v1/openapi.yaml", s.handleOpenAPIYAML)
+	mux.HandleFunc("GET /api/v1/docs", s.handleOpenAPIDocs)
 
 	// Auth
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
@@ -202,6 +206,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/webhooks", s.requireAuth(s.handleListWebhooks))
 	mux.HandleFunc("POST /api/v1/webhooks", s.requireAuth(s.handleCreateWebhook))
 	mux.HandleFunc("DELETE /api/v1/webhooks/{id}", s.requireAuth(s.handleDeleteWebhook))
+	mux.HandleFunc("GET /api/v1/webhooks/deliveries", s.requireAuth(s.handleListWebhookDeliveries))
+	mux.HandleFunc("POST /api/v1/webhooks/{id}/test", s.requireAuth(s.handleTestWebhook))
 
 	// Lockdown Mode (SEC-S23)
 	mux.HandleFunc("GET /api/v1/security/lockdown", s.requireAuth(s.handleGetLockdown))
@@ -256,6 +262,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/security/forensics", s.requireAuth(s.handleExportForensics))
 	mux.HandleFunc("GET /api/v1/backups/{id}/download", s.requireAuth(s.handleDownloadBackup))
 	mux.HandleFunc("POST /api/v1/billing/sso", s.requireAuth(s.handleBillingSSO))
+	mux.HandleFunc("GET /api/v1/billing/usage", s.requireAuth(s.handleBillingUsage))
 
 	// System Service Config Editor (Admin)
 	mux.HandleFunc("GET /api/v1/system/configs", s.requireAuth(s.handleListSysConfigs))

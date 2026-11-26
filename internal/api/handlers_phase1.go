@@ -452,6 +452,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := s.enqueueDomainApply(r, ac.User.ID, d, owner)
+	s.dispatchWebhookEvent("domain.created", map[string]any{"id": d.ID, "domain": d.Domain, "user": owner.Username})
 	s.audit(r, ac.User, "domain.create", "domain", d.ID, "success", map[string]any{"domain": d.Domain})
 	WriteJSON(w, http.StatusCreated, map[string]any{"domain": d, "job_id": jobID})
 }
@@ -600,6 +601,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	if j, err := s.jobs.Enqueue(r.Context(), "domain.delete", ac.User.ID, map[string]any{"domain": d.Domain}); err == nil {
 		jobID = &j.ID
 	}
+	s.dispatchWebhookEvent("domain.deleted", map[string]any{"id": d.ID, "domain": d.Domain})
 	s.audit(r, ac.User, "domain.delete", "domain", d.ID, "success", map[string]any{"domain": d.Domain})
 	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
 }

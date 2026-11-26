@@ -20,6 +20,7 @@ func main() {
 	url := flag.String("url", envOr("STAKO_URL", "https://127.0.0.1:8083"), "Panel base URL")
 	apiKey := flag.String("api-key", os.Getenv("STAKO_API_KEY"), "API key (Bearer stk_...)")
 	insecure := flag.Bool("insecure", false, "Skip TLS verification (dev self-signed)")
+	actingAs := flag.String("as", "", "Act as subordinate username (impersonation)")
 	flag.Parse()
 
 	args := flag.Args()
@@ -29,8 +30,9 @@ func main() {
 	}
 
 	c := &client{
-		base: strings.TrimRight(*url, "/"),
-		key:  *apiKey,
+		base:     strings.TrimRight(*url, "/"),
+		key:      *apiKey,
+		actingAs: strings.TrimSpace(*actingAs),
 		http: &http.Client{
 			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
@@ -109,9 +111,24 @@ func main() {
 			c.print("POST", "/api/v1/security/scan", nil)
 		} else if len(args) >= 2 && args[1] == "findings" {
 			c.print("GET", "/api/v1/security/findings", nil)
+		} else if len(args) >= 3 && args[1] == "lockdown" {
+			enabled := args[2] == "on" || args[2] == "true" || args[2] == "enable"
+			c.print("POST", "/api/v1/security/lockdown", map[string]any{"enabled": enabled})
+		} else if len(args) >= 2 && args[1] == "lockdown" {
+			c.print("GET", "/api/v1/security/lockdown", nil)
 		} else {
 			usage()
 		}
+	case "service":
+		handleServiceCLI(c, args[1:])
+	case "mail":
+		handleMailCLI(c, args[1:])
+	case "dns":
+		handleDNSCLI(c, args[1:])
+	case "cron":
+		handleCronCLI(c, args[1:])
+	case "backup":
+		handleBackupCLI(c, args[1:])
 	case "updates":
 		if len(args) >= 2 && args[1] == "list" {
 			c.print("GET", "/api/v1/updates", nil)
@@ -280,8 +297,204 @@ func handleUserCLI(c *client, args []string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage: stako [--url URL] [--api-key KEY] [--insecure] <command>")
-	fmt.Fprintln(os.Stderr, "Commands: version, doctor, health, system info, user, package, site, app, ip, db, ftp, firewall, security, updates, docker, catalog, job, audit")
+	fmt.Fprintln(os.Stderr, "Usage: stako [--url URL] [--api-key KEY] [--insecure] [--as USER] <command>")
+	fmt.Fprintln(os.Stderr, "Commands: version, doctor, health, system info, service, user, package, site, app, ip, db, ftp, mail, dns, cron, backup, firewall, security, updates, update, docker, catalog, job, audit")
+}
+
+func handleServiceCLI(c *client, args []string) {
+	if len(args) == 0 {
+		usage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		c.print("GET", "/api/v1/system/services", nil)
+	case "start", "stop", "restart", "enable", "disable":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("POST", "/api/v1/system/services/"+args[1]+"/action", map[string]any{"action": args[0]})
+	case "install":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("POST", "/api/v1/system/services/"+args[1]+"/install", nil)
+	case "remove", "uninstall":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("DELETE", "/api/v1/system/services/"+args[1], nil)
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func handleMailCLI(c *client, args []string) {
+	if len(args) == 0 {
+		usage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "domains", "list":
+		c.print("GET", "/api/v1/mail/domains", nil)
+	case "domain-create":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("POST", "/api/v1/mail/domains", map[string]any{"domain": args[1]})
+	case "domain-delete":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("DELETE", "/api/v1/mail/domains/"+args[1], nil)
+	case "mailboxes":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("GET", "/api/v1/mail/domains/"+args[1]+"/mailboxes", nil)
+	case "mailbox-add":
+		if len(args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: stako mail mailbox-add <domain_id> <local_part> <password>")
+			os.Exit(2)
+		}
+		c.print("POST", "/api/v1/mail/domains/"+args[1]+"/mailboxes", map[string]any{
+			"local_part": args[2], "password": args[3],
+		})
+	case "mailbox-del":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("DELETE", "/api/v1/mail/mailboxes/"+args[1], nil)
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func handleDNSCLI(c *client, args []string) {
+	if len(args) == 0 {
+		usage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "zones", "list":
+		c.print("GET", "/api/v1/dns/zones", nil)
+	case "zone-create":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		prov := "powerdns"
+		if len(args) >= 3 {
+			prov = args[2]
+		}
+		c.print("POST", "/api/v1/dns/zones", map[string]any{"domain": args[1], "provider": prov})
+	case "zone-delete":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("DELETE", "/api/v1/dns/zones/"+args[1], nil)
+	case "records":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("GET", "/api/v1/dns/zones/"+args[1]+"/records", nil)
+	case "record-create":
+		if len(args) < 5 {
+			fmt.Fprintln(os.Stderr, "Usage: stako dns record-create <zone_id> <type> <name> <content>")
+			os.Exit(2)
+		}
+		c.print("POST", "/api/v1/dns/zones/"+args[1]+"/records", map[string]any{
+			"type": args[2], "name": args[3], "content": args[4],
+		})
+	case "record-delete":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("DELETE", "/api/v1/dns/records/"+args[1], nil)
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func handleCronCLI(c *client, args []string) {
+	if len(args) == 0 {
+		usage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		c.print("GET", "/api/v1/cron", nil)
+	case "create":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: stako cron create \"<schedule>\" \"<command>\"")
+			os.Exit(2)
+		}
+		c.print("POST", "/api/v1/cron", map[string]any{"schedule": args[1], "command": args[2]})
+	case "delete":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("DELETE", "/api/v1/cron/"+args[1], nil)
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func handleBackupCLI(c *client, args []string) {
+	if len(args) == 0 {
+		usage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		c.print("GET", "/api/v1/backups", nil)
+	case "create":
+		kind := "user_data"
+		if len(args) >= 2 {
+			kind = args[1]
+		}
+		c.print("POST", "/api/v1/backups", map[string]any{"kind": kind, "target": "local"})
+	case "restore":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("POST", "/api/v1/backups/"+args[1]+"/restore", nil)
+	case "delete":
+		if len(args) < 2 {
+			os.Exit(2)
+		}
+		c.print("DELETE", "/api/v1/backups/"+args[1], nil)
+	case "config":
+		if len(args) < 2 {
+			usage()
+			os.Exit(2)
+		}
+		switch args[1] {
+		case "list":
+			c.print("GET", "/api/v1/backups?kind=system_config", nil)
+		case "create":
+			c.print("POST", "/api/v1/backups", map[string]any{"kind": "system_config", "target": "local"})
+		case "download":
+			if len(args) < 3 {
+				os.Exit(2)
+			}
+			c.print("GET", "/api/v1/backups/"+args[2]+"/download", nil)
+		case "restore":
+			if len(args) < 3 {
+				os.Exit(2)
+			}
+			c.print("POST", "/api/v1/backups/"+args[2]+"/restore", nil)
+		default:
+			usage()
+			os.Exit(2)
+		}
+	default:
+		usage()
+		os.Exit(2)
+	}
 }
 
 func runDoctor(c *client) {
@@ -324,9 +537,10 @@ func envOr(k, def string) string {
 }
 
 type client struct {
-	base string
-	key  string
-	http *http.Client
+	base     string
+	key      string
+	actingAs string
+	http     *http.Client
 }
 
 func (c *client) print(method, path string, body any) {
@@ -345,6 +559,9 @@ func (c *client) print(method, path string, body any) {
 	}
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
+	}
+	if c.actingAs != "" {
+		req.Header.Set("X-Stako-As", c.actingAs)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

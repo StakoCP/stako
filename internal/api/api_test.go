@@ -631,10 +631,22 @@ func TestSecurityIncidentAndBillingSSO(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	csrf := loginResp.CSRFToken
 
-	// Billing SSO
+	// Billing SSO (user + admin) & Usage & OpenAPI Docs & Webhook deliveries
 	rec = doReq(t, h, "POST", "/api/v1/billing/sso", map[string]string{"user_id": "u_user1"}, cookies, csrf)
 	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("sso_token")) {
 		t.Fatalf("billing sso = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/billing/sso", map[string]string{}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("admin billing sso = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/billing/usage", nil, cookies, ""); rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("items")) {
+		t.Fatalf("billing usage = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/docs", nil, nil, ""); rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("/api/v1/billing/usage")) {
+		t.Fatalf("api docs = %d", rec.Code)
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/webhooks/deliveries", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("webhook deliveries = %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// Reauth -> rotate keys + forensics export

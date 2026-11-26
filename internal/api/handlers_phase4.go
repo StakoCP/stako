@@ -358,6 +358,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}); err == nil {
 		jobID = &j.ID
 	}
+	s.dispatchWebhookEvent("backup.created", map[string]any{"id": bk.ID, "kind": bk.Kind, "target": bk.Target})
 	s.audit(r, ac.User, "backup.create", "backup", bk.ID, "success", map[string]any{"kind": bk.Kind, "target": bk.Target})
 	WriteJSON(w, http.StatusCreated, map[string]any{"backup": bk, "job_id": jobID})
 }
