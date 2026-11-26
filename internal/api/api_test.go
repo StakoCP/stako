@@ -312,7 +312,7 @@ func TestPhase2DatabasesFTPFirewallAndSecurity(t *testing.T) {
 	rec = doReq(t, h, "POST", "/api/v1/databases", map[string]any{
 		"name": "blog_db", "engine": "postgres", "db_password": "DB-Strong-Password-123",
 	}, cookies, csrf)
-	if rec.Code != 201 {
+	if rec.Code != 201 || !bytes.Contains(rec.Body.Bytes(), []byte(`"admin_blog_db"`)) {
 		t.Fatalf("create db = %d: %s", rec.Code, rec.Body.String())
 	}
 

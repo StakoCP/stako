@@ -52,20 +52,8 @@ func (s *Server) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
 		return
 	}
-	if err := agentproto.ValidateDBIdent(req.Name); err != nil {
-		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid database name", err.Error(),
-			FieldError{Field: "name", Message: err.Error()})
-		return
-	}
 	if req.Engine != "mariadb" && req.Engine != "postgres" {
 		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid engine", "Must be mariadb or postgres")
-		return
-	}
-	if req.DBUser == "" {
-		req.DBUser = req.Name
-	}
-	if err := agentproto.ValidateDBIdent(req.DBUser); err != nil {
-		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid db_user", err.Error())
 		return
 	}
 	if err := crypto.ValidatePasswordStrength(req.DBPassword); err != nil {
@@ -76,6 +64,26 @@ func (s *Server) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 	owner, ok := s.resolveTargetUser(r, ac, req.UserID)
 	if !ok {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden target user", "")
+		return
+	}
+	prefix := strings.ReplaceAll(owner.Username, "-", "_") + "_"
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name != "" && !strings.HasPrefix(req.Name, prefix) {
+		req.Name = prefix + req.Name
+	}
+	if err := agentproto.ValidateDBIdent(req.Name); err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid database name", err.Error(),
+			FieldError{Field: "name", Message: err.Error()})
+		return
+	}
+	req.DBUser = strings.TrimSpace(req.DBUser)
+	if req.DBUser == "" {
+		req.DBUser = req.Name
+	} else if !strings.HasPrefix(req.DBUser, prefix) {
+		req.DBUser = prefix + req.DBUser
+	}
+	if err := agentproto.ValidateDBIdent(req.DBUser); err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid db_user", err.Error())
 		return
 	}
 	if len(req.RemoteHosts) == 0 {

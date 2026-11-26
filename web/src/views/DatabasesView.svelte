@@ -19,6 +19,10 @@
 
   let canWrite = $derived(auth.user?.role !== 'readonly');
   let canSelectOwner = $derived(auth.user?.role === 'admin' || auth.user?.role === 'reseller');
+  let selectedUsername = $derived(
+    users.find((u) => u.id === fUserId)?.username ?? auth.user?.username ?? 'user'
+  );
+  let dbPrefix = $derived(`${selectedUsername.replace(/-/g, '_')}_`);
 
   // Create modal
   let formOpen = $state(false);
@@ -276,14 +280,17 @@
     <div class="form-row">
       <div class="form-group">
         <label class="form-label" for="db-name">{i18n.t.databases.name}</label>
-        <input
-          id="db-name"
-          type="text"
-          class="form-control"
-          bind:value={fName}
-          required
-          placeholder="app_prod"
-        />
+        <div class="input-group">
+          <span class="badge mono">{dbPrefix}</span>
+          <input
+            id="db-name"
+            type="text"
+            class="form-control"
+            bind:value={fName}
+            required
+            placeholder="blog"
+          />
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label" for="db-engine">{i18n.t.databases.engine}</label>
@@ -308,13 +315,16 @@
     <div class="form-row">
       <div class="form-group">
         <label class="form-label" for="db-user">{i18n.t.databases.dbUser}</label>
-        <input
-          id="db-user"
-          type="text"
-          class="form-control"
-          bind:value={fDbUser}
-          placeholder={i18n.t.databases.dbUserPlaceholder}
-        />
+        <div class="input-group">
+          <span class="badge mono">{dbPrefix}</span>
+          <input
+            id="db-user"
+            type="text"
+            class="form-control"
+            bind:value={fDbUser}
+            placeholder={fName.trim() || i18n.t.databases.dbUserPlaceholder}
+          />
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label" for="db-password">{i18n.t.databases.dbPassword}</label>
