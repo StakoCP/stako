@@ -633,7 +633,7 @@
         type="text"
         class="form-control"
         bind:value={fDocroot}
-        placeholder={`/home/${selectedUsername}/${fDomain.trim() || 'example.com'}/public_html`}
+        placeholder={`/home/${selectedUsername}/web/${fDomain.trim() || 'example.com'}/public_html`}
       />
       <div class="form-hint">{i18n.t.domains.docrootHint}</div>
     </div>

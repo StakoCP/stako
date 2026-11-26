@@ -322,7 +322,7 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 func validateDomainDocroot(username, domain, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return fmt.Sprintf("/home/%s/%s/public_html", username, domain), nil
+		return fmt.Sprintf("/home/%s/web/%s/public_html", username, domain), nil
 	}
 	if strings.ContainsAny(raw, "\n\r\t ") {
 		return "", fmt.Errorf("docroot must not contain spaces or control characters")

@@ -55,7 +55,7 @@ You can also trigger updates directly from the Dashboard.
 
 - **Domains & Web Hosting:**
   - Nginx / Apache2 / PHP-FPM (`8.3`–`8.5`) with isolated per-user PHP-FPM pools.
-  - Configurable per-domain document root (default `/home/<user>/<domain>/public_html`) with strict path isolation and `www-data` traversal permissions.
+  - Configurable per-domain document root (default `/home/<user>/web/<domain>/public_html`) with strict path isolation and `www-data` traversal permissions.
   - Per-domain access & error logs stored in `/home/<user>/web/<domain>/logs/` and viewable directly from the panel.
   - Path-based reverse proxy rules (HTTP, WebSocket, SSE, gRPC) and Let's Encrypt SSL automation.
 - **Docker, GitHub & Apps:**

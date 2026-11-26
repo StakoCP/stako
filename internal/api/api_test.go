@@ -181,11 +181,11 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		t.Fatalf("impersonate = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Create domain as alice (acting_as) -> default docroot /home/alice/alice.example.com/public_html
+	// Create domain as alice (acting_as) -> default docroot /home/alice/web/alice.example.com/public_html
 	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{
 		"domain": "alice.example.com", "template": "proxy", "proxy_target": "127.0.0.1:3000",
 	}, cookies, csrf)
-	if rec.Code != 201 || !bytes.Contains(rec.Body.Bytes(), []byte("/home/alice/alice.example.com/public_html")) {
+	if rec.Code != 201 || !bytes.Contains(rec.Body.Bytes(), []byte("/home/alice/web/alice.example.com/public_html")) {
 		t.Fatalf("create domain = %d: %s", rec.Code, rec.Body.String())
 	}
 	var domResp struct {
