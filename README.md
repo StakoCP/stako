@@ -88,6 +88,7 @@ Stako automatically detects installed system services on Ubuntu and lets adminis
 | **Mail** | Postfix (`postfix`), Dovecot (`dovecot-core` / `dovecot`), Rspamd (`rspamd`) |
 | **FTP** | ProFTPD FTPS (`proftpd-basic` / `proftpd`) |
 | **Container** | Docker Engine (`docker-ce` / `docker`) |
+| **WAF** | ModSecurity for Nginx (`libnginx-mod-http-modsecurity`) & Apache2 (`libapache2-mod-security2`, auto-installed when enabled) |
 | **Security** | Fail2Ban (`fail2ban`), ClamAV (`clamav-daemon`), nftables (`nftables`, *protected*), OpenSSH (`openssh-server` / `ssh`, *protected*) |
 
 ---
