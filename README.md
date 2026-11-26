@@ -38,11 +38,16 @@ https://<YOUR_SERVER_IP>:8083
 Update `stako-core`, `stako-agent`, and `stako` CLI without touching your database, master key, or existing sites:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/StakoCP/stako/refs/heads/main/installer/install.sh
-sudo bash install.sh --update
+curl -fsSL https://raw.githubusercontent.com/StakoCP/stako/refs/heads/main/installer/update.sh | sudo bash
 ```
 
-You can also run `sudo bash update.sh` or trigger updates directly from the Dashboard.
+Or if you already have the repository locally:
+
+```bash
+sudo bash installer/update.sh
+```
+
+You can also trigger updates directly from the Dashboard.
 
 ---
 
