@@ -229,7 +229,7 @@
               <td>
                 <div class="mini-list-main">
                   <strong>{svc.label}</strong>
-                  <span class="mini-list-meta mono">{svc.unit}</span>
+                  <span class="mini-list-meta mono">{svc.unit || 'cli'}</span>
                 </div>
               </td>
               <td>
@@ -245,6 +245,8 @@
                 <div class="table-actions">
                   {#if !svc.installed}
                     <span class="badge">{i18n.t.sysServices.statusNotInstalled}</span>
+                  {:else if !svc.unit}
+                    <span class="badge badge-info">{i18n.t.sysServices.installed} (CLI)</span>
                   {:else if isServiceActive(svc)}
                     <span class="badge badge-success">{i18n.t.sysServices.statusActive}</span>
                   {:else}
@@ -258,39 +260,41 @@
               <td>
                 <div class="table-actions">
                   {#if svc.installed}
-                    {#if !isServiceActive(svc)}
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-icon btn-primary"
-                        title={i18n.t.sysServices.actionStart}
-                        aria-label={i18n.t.sysServices.actionStart}
-                        onclick={() => handleAction(svc, 'start')}
-                        disabled={isBusy}
-                      >
-                        <ActionIcon name="start" />
-                      </button>
-                    {:else if !svc.protected}
+                    {#if svc.unit}
+                      {#if !isServiceActive(svc)}
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-icon btn-primary"
+                          title={i18n.t.sysServices.actionStart}
+                          aria-label={i18n.t.sysServices.actionStart}
+                          onclick={() => handleAction(svc, 'start')}
+                          disabled={isBusy}
+                        >
+                          <ActionIcon name="start" />
+                        </button>
+                      {:else if !svc.protected}
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-icon"
+                          title={i18n.t.sysServices.actionStop}
+                          aria-label={i18n.t.sysServices.actionStop}
+                          onclick={() => handleAction(svc, 'stop')}
+                          disabled={isBusy}
+                        >
+                          <ActionIcon name="stop" />
+                        </button>
+                      {/if}
                       <button
                         type="button"
                         class="btn btn-sm btn-icon"
-                        title={i18n.t.sysServices.actionStop}
-                        aria-label={i18n.t.sysServices.actionStop}
-                        onclick={() => handleAction(svc, 'stop')}
+                        title={i18n.t.sysServices.actionRestart}
+                        aria-label={i18n.t.sysServices.actionRestart}
+                        onclick={() => handleAction(svc, 'restart')}
                         disabled={isBusy}
                       >
-                        <ActionIcon name="stop" />
+                        <ActionIcon name="restart" />
                       </button>
                     {/if}
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-icon"
-                      title={i18n.t.sysServices.actionRestart}
-                      aria-label={i18n.t.sysServices.actionRestart}
-                      onclick={() => handleAction(svc, 'restart')}
-                      disabled={isBusy}
-                    >
-                      <ActionIcon name="restart" />
-                    </button>
                     {#if svc.config_service}
                       <button
                         type="button"

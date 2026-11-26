@@ -1400,13 +1400,17 @@ logfile /var/log/redis/redis-server-%s.log
 				active := "not-installed"
 				enabled := false
 				if installed {
-					actOut, _ := exec.Command("systemctl", "is-active", unit).Output()
-					active = strings.TrimSpace(string(actOut))
-					if active == "" {
-						active = "inactive"
+					if unit == "" {
+						active = "cli"
+					} else {
+						actOut, _ := exec.Command("systemctl", "is-active", unit).Output()
+						active = strings.TrimSpace(string(actOut))
+						if active == "" {
+							active = "inactive"
+						}
+						enOut, _ := exec.Command("systemctl", "is-enabled", unit).Output()
+						enabled = strings.TrimSpace(string(enOut)) == "enabled"
 					}
-					enOut, _ := exec.Command("systemctl", "is-enabled", unit).Output()
-					enabled = strings.TrimSpace(string(enOut)) == "enabled"
 				}
 				outMap[id] = map[string]any{"installed": installed, "version": ver, "active": active, "enabled": enabled}
 			}
@@ -1425,14 +1429,16 @@ logfile /var/log/redis/redis-server-%s.log
 		pkg, _ := req.Args["apt_pkg"].(string)
 		unit, _ := req.Args["unit"].(string)
 		if action == "uninstall" {
-			_ = runExec(resp, dryRun, logger, "systemctl", "disable", "--now", unit)
+			if unit != "" {
+				_ = runExec(resp, dryRun, logger, "systemctl", "disable", "--now", unit)
+			}
 			r := runExec(resp, dryRun, logger, "apt-get", "remove", "--purge", "-y", pkg)
 			_ = runExec(resp, dryRun, logger, "apt-get", "autoremove", "-y")
 			return r
 		}
 		_ = runExec(resp, dryRun, logger, "apt-get", "update", "-y")
 		r := runExec(resp, dryRun, logger, "apt-get", "install", "-y", pkg)
-		if r.OK {
+		if r.OK && unit != "" {
 			_ = runExec(resp, dryRun, logger, "systemctl", "enable", "--now", unit)
 		}
 		return r
