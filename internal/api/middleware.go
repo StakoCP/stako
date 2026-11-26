@@ -50,8 +50,10 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		corrID, _ := crypto.RandomHex(8)
 		ctx := context.WithValue(r.Context(), ctxCorrIDKey, corrID)
 		w.Header().Set("X-Request-Id", corrID)
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		if !strings.HasPrefix(r.URL.Path, "/phpmyadmin") && !strings.HasPrefix(r.URL.Path, "/phppgadmin") {
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")

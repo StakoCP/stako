@@ -82,10 +82,12 @@ func main() {
 
 	if !*dryRun {
 		if st, err := os.Stat("/etc/nginx/conf.d"); err == nil && st.IsDir() {
-			if ensureNginxCloudflareRealIP() {
-				if exec.Command("nginx", "-t").Run() == nil {
-					_ = exec.Command("systemctl", "reload", "nginx").Run()
-				}
+			changed := ensureNginxCloudflareRealIP()
+			if ensureDBAdminToolsNginx() {
+				changed = true
+			}
+			if changed && exec.Command("nginx", "-t").Run() == nil {
+				_ = exec.Command("systemctl", "reload", "nginx").Run()
 			}
 		}
 	}
@@ -2051,6 +2053,51 @@ func ensureApacheCloudflareRealIP() {
 		_ = os.WriteFile(p, []byte(cloudflareRealIPApache), 0o644)
 		_ = exec.Command("a2enconf", "cloudflare-realip").Run()
 	}
+}
+
+func ensureDBAdminToolsNginx() bool {
+	p := "/etc/nginx/conf.d/stako-dbtools.conf"
+	if _, err := os.Stat(p); err == nil {
+		return false
+	}
+	phpSock := "/run/php/php8.4-fpm.sock"
+	for _, cand := range []string{"/run/php/php8.4-fpm.sock", "/run/php/php8.3-fpm.sock", "/run/php/php8.5-fpm.sock", "/run/php/php-fpm.sock"} {
+		if _, err := os.Stat(cand); err == nil {
+			phpSock = cand
+			break
+		}
+	}
+	conf := fmt.Sprintf(`# Managed by Stako: local phpMyAdmin & phpPgAdmin backend for :8083 proxy
+server {
+    listen 127.0.0.1:8084;
+    server_name localhost;
+    client_max_body_size 128M;
+
+    location ^~ /phpmyadmin/ {
+        alias /usr/share/phpmyadmin/;
+        index index.php index.html;
+        location ~ ^/phpmyadmin/(.+\.php)$ {
+            alias /usr/share/phpmyadmin/$1;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+            fastcgi_pass unix:%s;
+        }
+    }
+
+    location ^~ /phppgadmin/ {
+        alias /usr/share/phppgadmin/;
+        index index.php index.html;
+        location ~ ^/phppgadmin/(.+\.php)$ {
+            alias /usr/share/phppgadmin/$1;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+            fastcgi_pass unix:%s;
+        }
+    }
+}
+`, phpSock, phpSock)
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	return os.WriteFile(p, []byte(conf), 0o644) == nil
 }
 
 func runSecurityScan() []map[string]any {

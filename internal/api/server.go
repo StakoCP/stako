@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -295,6 +297,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs", s.requireAuth(s.handleListJobs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}", s.requireAuth(s.handleGetJob))
 	mux.HandleFunc("GET /api/v1/system/info", s.requireAuth(s.handleSystemInfo))
+
+	// Database Web Managers (phpMyAdmin & phpPgAdmin via local Nginx on 127.0.0.1:8084)
+	if dbToolsURL, err := url.Parse("http://127.0.0.1:8084"); err == nil {
+		dbProxy := httputil.NewSingleHostReverseProxy(dbToolsURL)
+		origDirector := dbProxy.Director
+		dbProxy.Director = func(req *http.Request) {
+			origDirector(req)
+			req.Header.Set("X-Forwarded-Proto", "https")
+			req.Header.Set("X-Forwarded-Host", req.Host)
+		}
+		dbProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			WriteProblem(w, http.StatusServiceUnavailable, "service-unavailable", "Database web manager unavailable", "Ensure phpmyadmin/phppgadmin, nginx, and php-fpm are installed and running.")
+		}
+		mux.HandleFunc("/phpmyadmin", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/phpmyadmin/", http.StatusMovedPermanently)
+		})
+		mux.Handle("/phpmyadmin/", dbProxy)
+		mux.HandleFunc("/phppgadmin", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/phppgadmin/", http.StatusMovedPermanently)
+		})
+		mux.Handle("/phppgadmin/", dbProxy)
+	}
 
 	// Static Web UI with SPA fallback
 	if s.webFS != nil {

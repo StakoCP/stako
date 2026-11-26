@@ -191,7 +191,14 @@
 </div>
 
 <div class="toolbar">
-  <div></div>
+  <div class="toolbar-filters">
+    <a class="btn btn-sm" href="/phpmyadmin/" target="_blank" rel="noopener noreferrer">
+      phpMyAdmin
+    </a>
+    <a class="btn btn-sm" href="/phppgadmin/" target="_blank" rel="noopener noreferrer">
+      phpPgAdmin
+    </a>
+  </div>
   <button type="button" class="btn btn-sm" onclick={loadDatabases} disabled={loading}>
     {i18n.t.common.refresh}
   </button>

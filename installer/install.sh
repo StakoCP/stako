@@ -167,6 +167,12 @@ install_backend_stack() {
   ensure_pkg "php8.4-xml" "8.4"
   ensure_pkg "php8.4-zip" "8.4"
   ensure_pkg "mariadb-server" "1:10.6"
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections || true
+    echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect" | debconf-set-selections || true
+    apt-get install -y phpmyadmin || true
+    apt-get install -y phppgadmin || true
+  fi
   ensure_pkg "certbot" "1.21"
   ensure_pkg "python3-certbot-nginx" "1.21"
 
