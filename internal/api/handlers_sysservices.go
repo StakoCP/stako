@@ -44,6 +44,7 @@ var managedServices = []managedServiceSpec{
 	{ID: "rspamd", Label: "Rspamd Antispam", Category: "mail", Unit: "rspamd", AptPkg: "rspamd"},
 	{ID: "proftpd", Label: "ProFTPD (FTPS)", Category: "ftp", Unit: "proftpd", AptPkg: "proftpd-core"},
 	{ID: "docker", Label: "Docker Engine", Category: "container", Unit: "docker", AptPkg: "docker-ce"},
+	{ID: "goaccess", Label: "GoAccess Log Analyzer", Category: "analytics", Unit: "goaccess", AptPkg: "goaccess"},
 	{ID: "fail2ban", Label: "Fail2Ban", Category: "security", Unit: "fail2ban", AptPkg: "fail2ban"},
 	{ID: "nftables", Label: "nftables Firewall", Category: "security", Unit: "nftables", AptPkg: "nftables", Protected: true},
 	{ID: "clamav", Label: "ClamAV Antivirus", Category: "security", Unit: "clamav-daemon", AptPkg: "clamav-daemon"},
