@@ -1172,18 +1172,23 @@ func applyWAFConfig(resp agentproto.Response, logger *slog.Logger, enabled bool,
 		return resp
 	}
 
-	// Check if nginx has modsecurity module available
-	modMatches, _ := filepath.Glob("/etc/nginx/modules-enabled/*modsecurity*")
-	hasModSec := len(modMatches) > 0
+	// Check if nginx has modsecurity module available; auto-install if missing
+	hasModSec := checkNginxModSecurity()
 	if !hasModSec {
-		if out, err := exec.Command("nginx", "-V").CombinedOutput(); err == nil && strings.Contains(strings.ToLower(string(out)), "modsecurity") {
-			hasModSec = true
+		logger.Info("nginx modsecurity module not found, installing libnginx-mod-http-modsecurity")
+		_ = exec.Command("apt-get", "update", "-y").Run()
+		cmd := exec.Command("apt-get", "install", "-y", "libnginx-mod-http-modsecurity")
+		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			resp.Output = strings.TrimSpace(string(out))
+			resp.Error = fmt.Sprintf("failed to install libnginx-mod-http-modsecurity: %v", err)
+			return resp
 		}
-	}
-	if !hasModSec {
-		resp.OK = true
-		resp.Output = fmt.Sprintf("WAF configuration saved to /etc/stako/waf.conf (engine=%s, mode=%s, paranoia=%d); nginx ModSecurity module not installed", engine, mode, paranoia)
-		return resp
+		hasModSec = checkNginxModSecurity()
+		if !hasModSec {
+			resp.Error = "libnginx-mod-http-modsecurity installed, but nginx modsecurity module is still not detected"
+			return resp
+		}
 	}
 
 	secRuleEngine := "DetectionOnly"
@@ -1206,4 +1211,14 @@ func applyWAFConfig(resp agentproto.Response, logger *slog.Logger, enabled bool,
 		return testResp
 	}
 	return runExec(resp, false, logger, "systemctl", "reload", "nginx")
+}
+
+func checkNginxModSecurity() bool {
+	if modMatches, _ := filepath.Glob("/etc/nginx/modules-enabled/*modsecurity*"); len(modMatches) > 0 {
+		return true
+	}
+	if out, err := exec.Command("nginx", "-V").CombinedOutput(); err == nil {
+		return strings.Contains(strings.ToLower(string(out)), "modsecurity")
+	}
+	return false
 }
