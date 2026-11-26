@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path"
@@ -72,6 +73,7 @@ func (s *Server) handleCreateDNSZone(w http.ResponseWriter, r *http.Request) {
 		handleStoreErr(w, err)
 		return
 	}
+	s.syncDNSZone(r.Context(), z)
 	s.audit(r, ac.User, "dns.zone_create", "dns_zone", z.ID, "success", map[string]any{"domain": z.Domain, "provider": z.Provider})
 	WriteJSON(w, http.StatusCreated, z)
 }
@@ -90,6 +92,9 @@ func (s *Server) handleDeleteDNSZone(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteDNSZone(r.Context(), z.ID); err != nil {
 		handleStoreErr(w, err)
 		return
+	}
+	if z.Provider == "powerdns" {
+		_, _ = s.agent.Call(r.Context(), agentproto.CmdDNSZoneDelete, map[string]any{"domain": z.Domain})
 	}
 	s.audit(r, ac.User, "dns.zone_delete", "dns_zone", z.ID, "success", nil)
 	w.WriteHeader(http.StatusNoContent)
@@ -161,6 +166,7 @@ func (s *Server) handleCreateDNSRecord(w http.ResponseWriter, r *http.Request) {
 		handleStoreErr(w, err)
 		return
 	}
+	s.syncDNSZone(r.Context(), z)
 	s.audit(r, ac.User, "dns.record_create", "dns_record", rec.ID, "success", map[string]any{"type": rec.Type, "name": rec.Name})
 	WriteJSON(w, http.StatusCreated, rec)
 }
@@ -171,11 +177,39 @@ func (s *Server) handleDeleteDNSRecord(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
 		return
 	}
+	z, _ := s.store.GetDNSZone(r.Context(), r.PathValue("id"))
 	if err := s.store.DeleteDNSRecord(r.Context(), r.PathValue("recordId")); err != nil {
 		handleStoreErr(w, err)
 		return
 	}
+	if z != nil {
+		s.syncDNSZone(r.Context(), z)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) syncDNSZone(ctx context.Context, z *store.DNSZone) {
+	if z == nil || z.Provider != "powerdns" {
+		return
+	}
+	recs, err := s.store.ListDNSRecords(ctx, z.ID)
+	if err != nil {
+		return
+	}
+	recMaps := make([]map[string]any, 0, len(recs))
+	for _, rec := range recs {
+		recMaps = append(recMaps, map[string]any{
+			"type":     rec.Type,
+			"name":     rec.Name,
+			"content":  rec.Content,
+			"ttl":      rec.TTL,
+			"priority": rec.Priority,
+		})
+	}
+	_, _ = s.agent.Call(ctx, agentproto.CmdDNSZoneSync, map[string]any{
+		"domain":  z.Domain,
+		"records": recMaps,
+	})
 }
 
 // --- Cron Jobs ---
@@ -234,6 +268,7 @@ func (s *Server) handleCreateCron(w http.ResponseWriter, r *http.Request) {
 		handleStoreErr(w, err)
 		return
 	}
+	s.syncUserCron(r.Context(), owner.ID)
 	s.audit(r, ac.User, "cron.create", "cron", cj.ID, "success", map[string]any{"schedule": cj.Schedule})
 	WriteJSON(w, http.StatusCreated, cj)
 }
@@ -253,8 +288,32 @@ func (s *Server) handleDeleteCron(w http.ResponseWriter, r *http.Request) {
 		handleStoreErr(w, err)
 		return
 	}
+	s.syncUserCron(r.Context(), cj.UserID)
 	s.audit(r, ac.User, "cron.delete", "cron", cj.ID, "success", nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) syncUserCron(ctx context.Context, userID string) {
+	owner, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return
+	}
+	jobs, err := s.store.ListCronJobs(ctx, &userID, nil)
+	if err != nil {
+		return
+	}
+	jobMaps := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		jobMaps = append(jobMaps, map[string]any{
+			"id":       j.ID,
+			"schedule": j.Schedule,
+			"command":  j.Command,
+		})
+	}
+	_, _ = s.agent.Call(ctx, agentproto.CmdCronSync, map[string]any{
+		"username": owner.Username,
+		"jobs":     jobMaps,
+	})
 }
 
 // --- File Manager (SEC-A12 safe path resolution) ---

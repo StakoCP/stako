@@ -302,6 +302,133 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		resp.Output = "removed vhost for " + domain
 		return resp
 
+	case agentproto.CmdCronSync:
+		username, _ := req.Args["username"].(string)
+		if err := agentproto.ValidateLinuxUsername(username); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		cronPath := "/etc/cron.d/stako-" + username
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] sync " + cronPath
+			return resp
+		}
+		rawJobs, _ := req.Args["jobs"].([]any)
+		if len(rawJobs) == 0 {
+			_ = os.Remove(cronPath)
+			resp.OK = true
+			resp.Output = "removed empty crontab " + cronPath
+			return resp
+		}
+		var sb strings.Builder
+		sb.WriteString("# Managed by Stako. Do not edit manually.\n")
+		sb.WriteString("SHELL=/bin/bash\n")
+		sb.WriteString("PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n")
+		for _, item := range rawJobs {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			sched, _ := m["schedule"].(string)
+			cmdStr, _ := m["command"].(string)
+			if len(strings.Fields(sched)) != 5 || cmdStr == "" || strings.ContainsAny(cmdStr, "\n\r") {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("%s %s %s\n", sched, username, cmdStr))
+		}
+		if err := os.WriteFile(cronPath, []byte(sb.String()), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		resp.OK = true
+		resp.Output = "synced " + cronPath
+		return resp
+
+	case agentproto.CmdDNSZoneSync:
+		domain, _ := req.Args["domain"].(string)
+		if err := agentproto.ValidateDomain(domain); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] pdnsutil load-zone " + domain
+			return resp
+		}
+		if _, err := exec.LookPath("pdnsutil"); err != nil {
+			resp.OK = true
+			resp.Output = "pdnsutil not installed; zone stored in panel DB"
+			return resp
+		}
+		var zb strings.Builder
+		zb.WriteString(fmt.Sprintf("$ORIGIN %s.\n$TTL 3600\n", domain))
+		zb.WriteString(fmt.Sprintf("@ IN SOA ns1.%s. hostmaster.%s. 1 10800 3600 604800 3600\n", domain, domain))
+		zb.WriteString(fmt.Sprintf("@ IN NS ns1.%s.\n", domain))
+		if rawRecs, ok := req.Args["records"].([]any); ok {
+			for _, item := range rawRecs {
+				m, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				rtype, _ := m["type"].(string)
+				name, _ := m["name"].(string)
+				content, _ := m["content"].(string)
+				ttl := 3600
+				if tf, ok := m["ttl"].(float64); ok && tf > 0 {
+					ttl = int(tf)
+				}
+				prio := 0
+				if pf, ok := m["priority"].(float64); ok && pf > 0 {
+					prio = int(pf)
+				}
+				if rtype == "" || name == "" || content == "" || strings.ContainsAny(name+content, "\n\r") {
+					continue
+				}
+				if rtype == "TXT" && !strings.HasPrefix(content, `"`) {
+					content = `"` + strings.ReplaceAll(content, `"`, `\"`) + `"`
+				}
+				if rtype == "MX" || rtype == "SRV" {
+					zb.WriteString(fmt.Sprintf("%s %d IN %s %d %s\n", name, ttl, rtype, prio, content))
+				} else {
+					zb.WriteString(fmt.Sprintf("%s %d IN %s %s\n", name, ttl, rtype, content))
+				}
+			}
+		}
+		tmpFile, err := os.CreateTemp("", "stako-zone-*.zone")
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		tmpPath := tmpFile.Name()
+		defer os.Remove(tmpPath)
+		_, _ = tmpFile.WriteString(zb.String())
+		_ = tmpFile.Close()
+		if r := runExec(resp, false, logger, "pdnsutil", "load-zone", domain, tmpPath); !r.OK {
+			return r
+		}
+		_ = exec.Command("pdnsutil", "rectify-zone", domain).Run()
+		resp.OK = true
+		resp.Output = "synced PowerDNS zone " + domain
+		return resp
+
+	case agentproto.CmdDNSZoneDelete:
+		domain, _ := req.Args["domain"].(string)
+		if err := agentproto.ValidateDomain(domain); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] pdnsutil delete-zone " + domain
+			return resp
+		}
+		if _, err := exec.LookPath("pdnsutil"); err != nil {
+			resp.OK = true
+			return resp
+		}
+		return runExec(resp, false, logger, "pdnsutil", "delete-zone", domain)
+
 	case agentproto.CmdDomainLogs:
 		username, _ := req.Args["username"].(string)
 		domain, _ := req.Args["domain"].(string)
