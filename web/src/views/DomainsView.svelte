@@ -406,6 +406,16 @@
             </td>
             <td>
               <div class="table-actions">
+                <a
+                  class="btn btn-sm btn-icon"
+                  href={`${d.ssl_enabled ? 'https' : 'http'}://${d.domain}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`${i18n.t.domains.openUrl} (${d.domain})`}
+                  aria-label={`${i18n.t.domains.openUrl} (${d.domain})`}
+                >
+                  <ActionIcon name="external" />
+                </a>
                 {#if canWrite}
                   <button
                     type="button"

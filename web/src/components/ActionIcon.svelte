@@ -25,7 +25,8 @@
     | 'unban'
     | 'download'
     | 'shell'
-    | 'link';
+    | 'link'
+    | 'external';
 
   interface Props {
     name: ActionIconName;
@@ -115,5 +116,9 @@
   {:else if name === 'shell'}
     <polyline points="4 17 10 11 4 5" />
     <line x1="12" y1="19" x2="20" y2="19" />
+  {:else if name === 'external'}
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    <polyline points="15 3 21 3 21 9" />
+    <line x1="10" y1="14" x2="21" y2="3" />
   {/if}
 </svg>
