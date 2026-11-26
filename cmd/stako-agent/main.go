@@ -244,7 +244,8 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		}
 
 		if apacheConf != "" {
-			_ = exec.Command("a2enmod", "proxy", "proxy_http", "proxy_fcgi", "setenvif", "rewrite", "headers", "ssl").Run()
+			ensureApacheCloudflareRealIP()
+			_ = exec.Command("a2enmod", "proxy", "proxy_http", "proxy_fcgi", "setenvif", "rewrite", "headers", "ssl", "remoteip").Run()
 			if stack == "nginx_apache" {
 				_ = os.WriteFile("/etc/apache2/conf-available/stako-backend.conf", []byte("Listen 127.0.0.1:8080\n"), 0o644)
 				_ = exec.Command("a2enconf", "stako-backend").Run()
@@ -266,6 +267,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		}
 
 		if conf != "" {
+			ensureNginxCloudflareRealIP()
 			if err := os.WriteFile(nginxConfPath, []byte(conf), 0o644); err != nil {
 				resp.Error = err.Error()
 				return resp
@@ -1958,6 +1960,63 @@ func checkApacheModSecurity() bool {
 		return strings.Contains(strings.ToLower(string(out)), "security2_module")
 	}
 	return false
+}
+
+const cloudflareRealIPNginx = `# Managed by Stako: restore real visitor IP when behind Cloudflare proxy
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2a06:98c0::/29;
+set_real_ip_from 2c0f:f248::/32;
+real_ip_header CF-Connecting-IP;
+real_ip_recursive on;
+`
+
+const cloudflareRealIPApache = `# Managed by Stako: restore real visitor IP behind Cloudflare or local Nginx
+<IfModule remoteip_module>
+    RemoteIPHeader CF-Connecting-IP
+    RemoteIPTrustedProxy 127.0.0.1 ::1
+    RemoteIPTrustedProxy 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22
+    RemoteIPTrustedProxy 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20
+    RemoteIPTrustedProxy 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13
+    RemoteIPTrustedProxy 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22
+    RemoteIPTrustedProxy 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32
+    RemoteIPTrustedProxy 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+</IfModule>
+`
+
+func ensureNginxCloudflareRealIP() {
+	p := "/etc/nginx/conf.d/cloudflare-realip.conf"
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		_ = os.WriteFile(p, []byte(cloudflareRealIPNginx), 0o644)
+	}
+}
+
+func ensureApacheCloudflareRealIP() {
+	p := "/etc/apache2/conf-available/cloudflare-realip.conf"
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		_ = os.WriteFile(p, []byte(cloudflareRealIPApache), 0o644)
+		_ = exec.Command("a2enconf", "cloudflare-realip").Run()
+	}
 }
 
 func runSecurityScan() []map[string]any {
