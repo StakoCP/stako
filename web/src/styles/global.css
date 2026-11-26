@@ -419,6 +419,17 @@ pre,
   width: 100%;
 }
 
+.input-group {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.input-group .form-control {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Forms */
 .form-group {
   margin-bottom: 14px;

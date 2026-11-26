@@ -30,6 +30,7 @@
   let fUserId = $state('');
   let formError = $state('');
   let saving = $state(false);
+  let showPassword = $state(false);
 
   // Delete modal
   let deleteTarget = $state<Database | null>(null);
@@ -85,8 +86,31 @@
     fDbPassword = '';
     fRemoteHosts = '';
     fUserId = auth.user?.id ?? '';
+    showPassword = false;
     formError = '';
     formOpen = true;
+  }
+
+  function generatePassword() {
+    const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_';
+    const bytes = new Uint32Array(20);
+    crypto.getRandomValues(bytes);
+    let out = '';
+    for (let i = 0; i < bytes.length; i++) {
+      out += charset[bytes[i] % charset.length];
+    }
+    fDbPassword = out;
+    showPassword = true;
+  }
+
+  async function copyPassword() {
+    if (!fDbPassword) return;
+    try {
+      await navigator.clipboard.writeText(fDbPassword);
+      toast.success(i18n.t.common.copied);
+    } catch {
+      // ignore
+    }
   }
 
   async function submitForm(e: SubmitEvent) {
@@ -294,14 +318,44 @@
       </div>
       <div class="form-group">
         <label class="form-label" for="db-password">{i18n.t.databases.dbPassword}</label>
-        <input
-          id="db-password"
-          type="password"
-          class="form-control"
-          bind:value={fDbPassword}
-          required
-          autocomplete="new-password"
-        />
+        <div class="input-group">
+          <input
+            id="db-password"
+            type={showPassword ? 'text' : 'password'}
+            class="form-control"
+            bind:value={fDbPassword}
+            required
+            autocomplete="new-password"
+          />
+          <button
+            type="button"
+            class="btn btn-sm btn-icon"
+            title={i18n.t.databases.generatePassword}
+            aria-label={i18n.t.databases.generatePassword}
+            onclick={generatePassword}
+          >
+            <ActionIcon name="key" />
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-icon"
+            title={i18n.t.databases.togglePassword}
+            aria-label={i18n.t.databases.togglePassword}
+            onclick={() => (showPassword = !showPassword)}
+          >
+            <ActionIcon name="eye" />
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-icon"
+            title={i18n.t.common.copy}
+            aria-label={i18n.t.common.copy}
+            disabled={!fDbPassword}
+            onclick={copyPassword}
+          >
+            <ActionIcon name="copy" />
+          </button>
+        </div>
       </div>
     </div>
 
