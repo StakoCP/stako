@@ -52,6 +52,8 @@ server {
     access_log /home/{{ .Username }}/web/{{ .Domain }}/logs/access.log;
     error_log  /home/{{ .Username }}/web/{{ .Domain }}/logs/error.log;
 
+    include /home/{{ .Username }}/web/{{ .Domain }}/conf/nginx/*.conf;
+
     {{- range .ProxyRules }}
     location {{ .Path }} {
         proxy_pass http://{{ .Upstream }};

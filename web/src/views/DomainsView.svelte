@@ -101,6 +101,49 @@
     loadDomainLogs(d, 'access');
   }
 
+  // Custom Nginx config modal
+  let customNginxDomain = $state<Domain | null>(null);
+  let customNginxPath = $state('');
+  let customNginxContent = $state('');
+  let customNginxLoading = $state(false);
+  let customNginxSaving = $state(false);
+  let customNginxError = $state('');
+
+  async function openCustomNginx(d: Domain) {
+    customNginxDomain = d;
+    customNginxPath = '';
+    customNginxContent = '';
+    customNginxError = '';
+    customNginxLoading = true;
+    try {
+      const res = await api.get<{ path: string; content: string }>(`/domains/${d.id}/custom-nginx`);
+      customNginxPath = res.path || '';
+      customNginxContent = res.content || '';
+    } catch (err) {
+      customNginxError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      customNginxLoading = false;
+    }
+  }
+
+  async function saveCustomNginx(e: SubmitEvent) {
+    e.preventDefault();
+    if (!customNginxDomain) return;
+    customNginxError = '';
+    customNginxSaving = true;
+    try {
+      await api.put<{ ok: boolean; path: string }>(`/domains/${customNginxDomain.id}/custom-nginx`, {
+        content: customNginxContent,
+      });
+      toast.success(i18n.t.domains.customNginxSaved);
+      customNginxDomain = null;
+    } catch (err) {
+      customNginxError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      customNginxSaving = false;
+    }
+  }
+
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
       toast.success(`${message} (${fmt(i18n.t.domains.jobToast, { jobId })})`, {
@@ -487,6 +530,17 @@
                 {#if canWrite}
                   <button
                     type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.domains.customNginx}
+                    aria-label={i18n.t.domains.customNginx}
+                    onclick={() => openCustomNginx(d)}
+                  >
+                    <ActionIcon name="config" />
+                  </button>
+                {/if}
+                {#if canWrite}
+                  <button
+                    type="button"
                     class="btn btn-sm btn-icon btn-danger"
                     title={i18n.t.common.delete}
                     aria-label={i18n.t.common.delete}
@@ -777,6 +831,54 @@
   {#snippet footer()}
     <button type="button" class="btn" onclick={() => (proxyModalDomain = null)}>
       {i18n.t.common.close}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={customNginxDomain !== null}
+  title={customNginxDomain ? `${i18n.t.domains.customNginx}: ${customNginxDomain.domain}` : ''}
+  size="lg"
+  onclose={() => (customNginxDomain = null)}
+>
+  <form id="custom-nginx-form" onsubmit={saveCustomNginx}>
+    {#if customNginxError}
+      <div class="alert alert-danger" role="alert">{customNginxError}</div>
+    {/if}
+    {#if customNginxPath}
+      <p class="form-hint mono">{customNginxPath}</p>
+    {/if}
+    <p class="form-hint">{i18n.t.domains.customNginxHint}</p>
+    {#if customNginxLoading}
+      <p>{i18n.t.common.loading}</p>
+    {:else}
+      <div class="form-group">
+        <textarea
+          class="form-control mono"
+          rows="12"
+          bind:value={customNginxContent}
+          placeholder="client_max_body_size 64M;"
+          aria-label={i18n.t.domains.customNginx}
+        ></textarea>
+      </div>
+    {/if}
+  </form>
+  {#snippet footer()}
+    <button
+      type="button"
+      class="btn"
+      onclick={() => (customNginxDomain = null)}
+      disabled={customNginxSaving}
+    >
+      {i18n.t.common.cancel}
+    </button>
+    <button
+      type="submit"
+      form="custom-nginx-form"
+      class="btn btn-primary"
+      disabled={customNginxLoading || customNginxSaving}
+    >
+      {customNginxSaving ? i18n.t.common.loading : i18n.t.common.save}
     </button>
   {/snippet}
 </Modal>

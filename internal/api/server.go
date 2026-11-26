@@ -115,6 +115,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/domains/{id}", s.requireAuth(s.handleDeleteDomain))
 	mux.HandleFunc("POST /api/v1/domains/{id}/ssl", s.requireAuth(s.handleIssueSSL))
 	mux.HandleFunc("GET /api/v1/domains/{id}/logs", s.requireAuth(s.handleDomainLogs))
+	mux.HandleFunc("GET /api/v1/domains/{id}/custom-nginx", s.requireAuth(s.handleGetDomainCustomNginx))
+	mux.HandleFunc("PUT /api/v1/domains/{id}/custom-nginx", s.requireAuth(s.handleSetDomainCustomNginx))
 	mux.HandleFunc("GET /api/v1/domains/{id}/proxy-rules", s.requireAuth(s.handleListProxyRules))
 	mux.HandleFunc("POST /api/v1/domains/{id}/proxy-rules", s.requireAuth(s.handleCreateProxyRule))
 	mux.HandleFunc("DELETE /api/v1/domains/{id}/proxy-rules/{ruleId}", s.requireAuth(s.handleDeleteProxyRule))

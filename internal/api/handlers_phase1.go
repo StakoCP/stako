@@ -645,6 +645,99 @@ func (s *Server) handleDomainLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleGetDomainCustomNginx(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	d, err := s.store.GetDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, d.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	owner, err := s.store.GetUserByID(r.Context(), d.UserID)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdDomainCustomConfRead, map[string]any{
+		"username": owner.Username,
+		"domain":   d.Domain,
+	})
+	if err != nil {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Agent error", err.Error())
+		return
+	}
+	if !resp.OK {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to read custom nginx config", resp.Error)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"domain":  d.Domain,
+		"path":    resp.Data["path"],
+		"content": resp.Data["content"],
+	})
+}
+
+func (s *Server) handleSetDomainCustomNginx(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	d, err := s.store.GetDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, d.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	if len(req.Content) > 128*1024 {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Custom config exceeds 128KB limit", "")
+		return
+	}
+	low := strings.ToLower(req.Content)
+	for _, forbidden := range []string{"load_module", "lua_", "perl_", "env "} {
+		if strings.Contains(low, forbidden) {
+			WriteProblem(w, http.StatusForbidden, "forbidden", "Directive not allowed in user nginx config: "+strings.TrimSpace(forbidden), "")
+			return
+		}
+	}
+	owner, err := s.store.GetUserByID(r.Context(), d.UserID)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdDomainCustomConfWrite, map[string]any{
+		"username": owner.Username,
+		"domain":   d.Domain,
+		"content":  req.Content,
+	})
+	if err != nil {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Agent error", err.Error())
+		return
+	}
+	if !resp.OK {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Nginx config test failed", resp.Error+" "+resp.Output)
+		return
+	}
+	s.audit(r, ac.User, "domain.custom_nginx", "domain", d.ID, "success", nil)
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"path": resp.Data["path"],
+	})
+}
+
 func (s *Server) handleIssueSSL(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	if ac.User.Role == "readonly" {

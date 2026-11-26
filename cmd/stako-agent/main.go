@@ -211,6 +211,9 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			logsDir := fmt.Sprintf("/home/%s/web/%s/logs", username, domain)
 			_ = os.MkdirAll(logsDir, 0o750)
 			ensureDocrootPermissions(username, logsDir)
+			confDir := fmt.Sprintf("/home/%s/web/%s/conf/nginx", username, domain)
+			_ = os.MkdirAll(confDir, 0o750)
+			ensureDocrootPermissions(username, confDir)
 		}
 		if tmpl != "proxy" && tmpl != "spa" && tmpl != "static" && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
 			ensurePHPFpmPool(username, phpVer, logger)
@@ -288,6 +291,82 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		resp.OK = true
 		resp.Data = map[string]any{"path": logPath, "logs": string(out)}
 		return resp
+
+	case agentproto.CmdDomainCustomConfRead:
+		username, _ := req.Args["username"].(string)
+		domain, _ := req.Args["domain"].(string)
+		if err := agentproto.ValidateLinuxUsername(username); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if err := agentproto.ValidateDomain(domain); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		confPath := fmt.Sprintf("/home/%s/web/%s/conf/nginx/custom.conf", username, domain)
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{"path": confPath, "content": ""}
+			return resp
+		}
+		b, err := os.ReadFile(confPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				resp.OK = true
+				resp.Data = map[string]any{"path": confPath, "content": ""}
+				return resp
+			}
+			resp.Error = err.Error()
+			return resp
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"path": confPath, "content": string(b)}
+		return resp
+
+	case agentproto.CmdDomainCustomConfWrite:
+		username, _ := req.Args["username"].(string)
+		domain, _ := req.Args["domain"].(string)
+		content, _ := req.Args["content"].(string)
+		if err := agentproto.ValidateLinuxUsername(username); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if err := agentproto.ValidateDomain(domain); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		confDir := fmt.Sprintf("/home/%s/web/%s/conf/nginx", username, domain)
+		confPath := filepath.Join(confDir, "custom.conf")
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{"path": confPath}
+			return resp
+		}
+		_ = os.MkdirAll(confDir, 0o750)
+		ensureDocrootPermissions(username, confDir)
+		prev, prevErr := os.ReadFile(confPath)
+		if strings.TrimSpace(content) == "" {
+			_ = os.Remove(confPath)
+		} else {
+			if err := os.WriteFile(confPath, []byte(content), 0o640); err != nil {
+				resp.Error = err.Error()
+				return resp
+			}
+			_ = exec.Command("chown", username+":www-data", confPath).Run()
+		}
+		testResp := runExec(resp, false, logger, "nginx", "-t")
+		if !testResp.OK {
+			if prevErr == nil {
+				_ = os.WriteFile(confPath, prev, 0o640)
+				_ = exec.Command("chown", username+":www-data", confPath).Run()
+			} else {
+				_ = os.Remove(confPath)
+			}
+			return testResp
+		}
+		r := runExec(resp, false, logger, "systemctl", "reload", "nginx")
+		r.Data = map[string]any{"path": confPath}
+		return r
 
 	case agentproto.CmdSSLIssue:
 		domain, _ := req.Args["domain"].(string)

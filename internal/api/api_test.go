@@ -216,6 +216,16 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		}
 	}
 
+	// Read & update per-domain custom nginx config
+	if rec := doReq(t, h, "GET", "/api/v1/domains/"+domResp.Domain.ID+"/custom-nginx", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("get custom-nginx = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "PUT", "/api/v1/domains/"+domResp.Domain.ID+"/custom-nginx", map[string]string{
+		"content": "client_max_body_size 64M;\n",
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("put custom-nginx = %d: %s", rec.Code, rec.Body.String())
+	}
+
 	// Set then clear ipv4_id with explicit null
 	rec = doReq(t, h, "GET", "/api/v1/ips", nil, cookies, "")
 	var ipsResp struct {
