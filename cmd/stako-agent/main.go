@@ -813,21 +813,26 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		return runExec(resp, dryRun, logger, "fail2ban-client", "set", jail, "unbanip", ip)
 
 	case agentproto.CmdSecurityScan:
-		resp.OK = true
-		resp.Data = map[string]any{
-			"findings": []map[string]any{
-				{
-					"id":          "sf_ssh_root",
-					"category":    "ssh",
-					"severity":    "low",
-					"title":       "Verify SSH PermitRootLogin is set to prohibit-password",
-					"description": "Baseline CIS check for OpenSSH root login restriction.",
-					"remediation": "Ensure PermitRootLogin prohibit-password in /etc/ssh/sshd_config",
-					"component":   "openssh-server",
-					"status":      "resolved",
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{
+				"findings": []map[string]any{
+					{
+						"id":          "sf_ssh_root",
+						"category":    "ssh",
+						"severity":    "low",
+						"title":       "Verify SSH PermitRootLogin is set to prohibit-password",
+						"description": "Baseline CIS check for OpenSSH root login restriction.",
+						"remediation": "Ensure PermitRootLogin prohibit-password in /etc/ssh/sshd_config",
+						"component":   "openssh-server",
+						"status":      "resolved",
+					},
 				},
-			},
+			}
+			return resp
 		}
+		resp.OK = true
+		resp.Data = map[string]any{"findings": runSecurityScan()}
 		return resp
 
 	case agentproto.CmdUpdatesList:
@@ -1001,15 +1006,80 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 
 	case agentproto.CmdRedisCreate:
 		name, _ := req.Args["name"].(string)
-		return runExec(resp, dryRun, logger, "systemctl", "enable", "--now", "redis-server@"+name)
+		port := 6380
+		if pf, ok := req.Args["port"].(float64); ok && pf > 0 {
+			port = int(pf)
+		}
+		pass, _ := req.Args["password"].(string)
+		memMB := 256
+		if mf, ok := req.Args["memory_mb"].(float64); ok && mf > 0 {
+			memMB = int(mf)
+		}
+		persistent, _ := req.Args["persistent"].(bool)
+		if err := agentproto.ValidateLinuxUsername(name); err != nil {
+			resp.Error = "invalid redis instance name: " + err.Error()
+			return resp
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "systemctl", "enable", "--now", "redis-server@"+name)
+		}
+		dataDir := "/var/lib/redis-" + name
+		_ = os.MkdirAll(dataDir, 0o750)
+		_ = os.MkdirAll("/etc/redis", 0o755)
+		_ = exec.Command("chown", "redis:redis", dataDir).Run()
+		persistLine := "save \"\"\nappendonly no"
+		if persistent {
+			persistLine = "save 900 1\nsave 300 10\nappendonly yes"
+		}
+		redisConf := fmt.Sprintf(`# Managed by Stako. Do not edit manually.
+bind 127.0.0.1 ::1
+port %d
+requirepass %s
+maxmemory %dmb
+maxmemory-policy allkeys-lru
+dir %s
+pidfile /run/redis/redis-server-%s.pid
+logfile /var/log/redis/redis-server-%s.log
+%s
+`, port, pass, memMB, dataDir, name, name, persistLine)
+		confPath := "/etc/redis/redis-" + name + ".conf"
+		if err := os.WriteFile(confPath, []byte(redisConf), 0o640); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		_ = exec.Command("chown", "redis:redis", confPath).Run()
+		return runExec(resp, false, logger, "systemctl", "enable", "--now", "redis-server@"+name)
 
 	case agentproto.CmdRedisDelete:
 		name, _ := req.Args["name"].(string)
-		return runExec(resp, dryRun, logger, "systemctl", "disable", "--now", "redis-server@"+name)
+		if err := agentproto.ValidateLinuxUsername(name); err != nil {
+			resp.Error = "invalid redis instance name: " + err.Error()
+			return resp
+		}
+		r := runExec(resp, dryRun, logger, "systemctl", "disable", "--now", "redis-server@"+name)
+		if !dryRun {
+			_ = os.Remove("/etc/redis/redis-" + name + ".conf")
+		}
+		return r
 
 	case agentproto.CmdRabbitCreate:
 		vhost, _ := req.Args["vhost"].(string)
-		return runExec(resp, dryRun, logger, "rabbitmqctl", "add_vhost", vhost)
+		username, _ := req.Args["username"].(string)
+		password, _ := req.Args["password"].(string)
+		if dryRun {
+			return runExec(resp, true, logger, "rabbitmqctl", "add_vhost", vhost)
+		}
+		if r := runExec(resp, false, logger, "rabbitmqctl", "add_vhost", vhost); !r.OK {
+			return r
+		}
+		if username != "" && password != "" {
+			if r := runExec(resp, false, logger, "rabbitmqctl", "add_user", username, password); !r.OK {
+				_ = runExec(resp, false, logger, "rabbitmqctl", "change_password", username, password)
+			}
+			return runExec(resp, false, logger, "rabbitmqctl", "set_permissions", "-p", vhost, username, ".*", ".*", ".*")
+		}
+		resp.OK = true
+		return resp
 
 	case agentproto.CmdRabbitDelete:
 		vhost, _ := req.Args["vhost"].(string)
@@ -1675,4 +1745,132 @@ func checkApacheModSecurity() bool {
 		return strings.Contains(strings.ToLower(string(out)), "security2_module")
 	}
 	return false
+}
+
+func runSecurityScan() []map[string]any {
+	findings := []map[string]any{}
+
+	// 1. SSH PermitRootLogin & PasswordAuthentication
+	sshRootStatus := "resolved"
+	sshPassStatus := "open"
+	sshFiles, _ := filepath.Glob("/etc/ssh/sshd_config.d/*.conf")
+	sshFiles = append([]string{"/etc/ssh/sshd_config"}, sshFiles...)
+	for _, f := range sshFiles {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			t := strings.TrimSpace(line)
+			if t == "" || strings.HasPrefix(t, "#") {
+				continue
+			}
+			low := strings.ToLower(t)
+			if strings.HasPrefix(low, "permitrootlogin") && strings.Contains(low, "yes") {
+				sshRootStatus = "open"
+			}
+			if strings.HasPrefix(low, "passwordauthentication") && strings.Contains(low, "no") {
+				sshPassStatus = "resolved"
+			}
+		}
+	}
+	findings = append(findings,
+		map[string]any{
+			"id":          "sf_ssh_root",
+			"category":    "ssh",
+			"severity":    "high",
+			"title":       "SSH root login should not allow password authentication",
+			"description": "Checks /etc/ssh/sshd_config and sshd_config.d for PermitRootLogin yes.",
+			"remediation": "Set PermitRootLogin prohibit-password or no in /etc/ssh/sshd_config",
+			"component":   "openssh-server",
+			"status":      sshRootStatus,
+		},
+		map[string]any{
+			"id":          "sf_ssh_password",
+			"category":    "ssh",
+			"severity":    "medium",
+			"title":       "Prefer key-based SSH authentication over passwords",
+			"description": "Checks whether PasswordAuthentication no is configured for OpenSSH.",
+			"remediation": "Set PasswordAuthentication no in /etc/ssh/sshd_config after configuring SSH keys",
+			"component":   "openssh-server",
+			"status":      sshPassStatus,
+		},
+	)
+
+	// 2. Firewall (nftables) & Fail2Ban
+	fwStatus := "open"
+	if out, err := exec.Command("systemctl", "is-active", "nftables").Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+		fwStatus = "resolved"
+	}
+	findings = append(findings, map[string]any{
+		"id":          "sf_firewall_inactive",
+		"category":    "firewall",
+		"severity":    "high",
+		"title":       "Host firewall (nftables) must be active",
+		"description": "Verifies that nftables systemd service is running.",
+		"remediation": "Run: systemctl enable --now nftables",
+		"component":   "nftables",
+		"status":      fwStatus,
+	})
+
+	f2bStatus := "open"
+	if out, err := exec.Command("systemctl", "is-active", "fail2ban").Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+		f2bStatus = "resolved"
+	}
+	findings = append(findings, map[string]any{
+		"id":          "sf_fail2ban_inactive",
+		"category":    "intrusion",
+		"severity":    "medium",
+		"title":       "Fail2Ban brute-force protection must be active",
+		"description": "Verifies that fail2ban systemd service is running.",
+		"remediation": "Run: systemctl enable --now fail2ban",
+		"component":   "fail2ban",
+		"status":      f2bStatus,
+	})
+
+	// 3. Pending security updates via apt-get -s upgrade
+	secUpdates := 0
+	if out, err := exec.Command("apt-get", "-s", "upgrade").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "Inst ") && strings.Contains(strings.ToLower(line), "security") {
+				secUpdates++
+			}
+		}
+	}
+	updStatus := "resolved"
+	updSev := "low"
+	if secUpdates > 0 {
+		updStatus = "open"
+		updSev = "high"
+	}
+	findings = append(findings, map[string]any{
+		"id":          "sf_apt_security_updates",
+		"category":    "packages",
+		"severity":    updSev,
+		"title":       fmt.Sprintf("Pending Ubuntu security updates (%d)", secUpdates),
+		"description": "Checks apt-get -s upgrade for unapplied security patches.",
+		"remediation": "Apply security updates from Security -> Updates or run apt-get upgrade -y",
+		"component":   "apt",
+		"status":      updStatus,
+	})
+
+	// 4. Master key file permissions
+	keyStatus := "resolved"
+	if info, err := os.Stat("/etc/stako/keys/master.key"); err == nil {
+		if info.Mode().Perm()&0o077 != 0 {
+			keyStatus = "open"
+		}
+	}
+	findings = append(findings, map[string]any{
+		"id":          "sf_master_key_perms",
+		"category":    "secrets",
+		"severity":    "critical",
+		"title":       "Stako master key permissions must be 0600",
+		"description": "Verifies /etc/stako/keys/master.key is not readable by group or others.",
+		"remediation": "Run: chmod 0600 /etc/stako/keys/master.key",
+		"component":   "stako-core",
+		"status":      keyStatus,
+	})
+
+	return findings
 }

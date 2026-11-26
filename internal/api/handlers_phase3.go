@@ -537,7 +537,13 @@ func (s *Server) handleCreateRedis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var jobID *string
-	if j, err := s.jobs.Enqueue(r.Context(), "redis.create", ac.User.ID, map[string]any{"name": inst.Name, "port": inst.Port}); err == nil {
+	if j, err := s.jobs.Enqueue(r.Context(), "redis.create", ac.User.ID, map[string]any{
+		"name":       inst.Name,
+		"port":       inst.Port,
+		"password":   pass,
+		"memory_mb":  inst.MemoryMB,
+		"persistent": inst.Persistent,
+	}); err == nil {
 		jobID = &j.ID
 	}
 	s.audit(r, ac.User, "redis.create", "redis", inst.ID, "success", map[string]any{"name": inst.Name, "port": inst.Port})
@@ -627,7 +633,9 @@ func (s *Server) handleCreateRabbit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var jobID *string
-	if j, err := s.jobs.Enqueue(r.Context(), "rabbitmq.create", ac.User.ID, map[string]any{"vhost": rv.Vhost, "username": rv.Username}); err == nil {
+	if j, err := s.jobs.Enqueue(r.Context(), "rabbitmq.create", ac.User.ID, map[string]any{
+		"vhost": rv.Vhost, "username": rv.Username, "password": req.Password,
+	}); err == nil {
 		jobID = &j.ID
 	}
 	s.audit(r, ac.User, "rabbitmq.create", "rabbitmq", rv.ID, "success", map[string]any{"vhost": rv.Vhost})
