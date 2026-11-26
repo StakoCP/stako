@@ -42,7 +42,7 @@ var managedServices = []managedServiceSpec{
 	{ID: "postfix", Label: "Postfix MTA", Category: "mail", Unit: "postfix", AptPkg: "postfix", ConfigService: "postfix"},
 	{ID: "dovecot", Label: "Dovecot IMAP/POP3", Category: "mail", Unit: "dovecot", AptPkg: "dovecot-core", ConfigService: "dovecot"},
 	{ID: "rspamd", Label: "Rspamd Antispam", Category: "mail", Unit: "rspamd", AptPkg: "rspamd"},
-	{ID: "proftpd", Label: "ProFTPD (FTPS)", Category: "ftp", Unit: "proftpd", AptPkg: "proftpd-basic"},
+	{ID: "proftpd", Label: "ProFTPD (FTPS)", Category: "ftp", Unit: "proftpd", AptPkg: "proftpd-core"},
 	{ID: "docker", Label: "Docker Engine", Category: "container", Unit: "docker", AptPkg: "docker-ce"},
 	{ID: "fail2ban", Label: "Fail2Ban", Category: "security", Unit: "fail2ban", AptPkg: "fail2ban"},
 	{ID: "nftables", Label: "nftables Firewall", Category: "security", Unit: "nftables", AptPkg: "nftables", Protected: true},

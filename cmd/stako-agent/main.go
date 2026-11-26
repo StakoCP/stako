@@ -1029,11 +1029,33 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 				}
 				installed := false
 				ver := ""
-				if stOut, err := exec.Command("dpkg-query", "-W", "-f=${Status}|${Version}", pkg).Output(); err == nil {
-					parts := strings.SplitN(strings.TrimSpace(string(stOut)), "|", 2)
-					if len(parts) == 2 && parts[0] == "install ok installed" {
-						installed = true
-						ver = parts[1]
+				pkgCandidates := []string{pkg}
+				switch id {
+				case "proftpd":
+					pkgCandidates = []string{"proftpd-core", "proftpd-basic"}
+				case "docker":
+					pkgCandidates = []string{"docker-ce", "docker.io"}
+				case "mariadb":
+					pkgCandidates = []string{"mariadb-server", "mysql-server"}
+				}
+				for _, cand := range pkgCandidates {
+					if cand == "" {
+						continue
+					}
+					if stOut, err := exec.Command("dpkg-query", "-W", "-f=${Status}|${Version}", cand).Output(); err == nil {
+						parts := strings.SplitN(strings.TrimSpace(string(stOut)), "|", 2)
+						if len(parts) == 2 && parts[0] == "install ok installed" {
+							installed = true
+							ver = parts[1]
+							break
+						}
+					}
+				}
+				if !installed && unit != "" {
+					if loadOut, err := exec.Command("systemctl", "show", "-p", "LoadState", "--value", unit).Output(); err == nil {
+						if strings.TrimSpace(string(loadOut)) == "loaded" {
+							installed = true
+						}
 					}
 				}
 				active := "not-installed"
