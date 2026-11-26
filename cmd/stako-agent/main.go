@@ -842,9 +842,17 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		return runExec(resp, dryRun, logger, "sudo", "-u", username, "bash", "-lc", cmdStr)
 
 	case agentproto.CmdWAFApply:
+		enabled, _ := req.Args["enabled"].(bool)
 		engine, _ := req.Args["engine"].(string)
 		mode, _ := req.Args["mode"].(string)
-		return runExec(resp, dryRun, logger, "stako-waf", engine, mode)
+		paranoia := 1
+		if pf, ok := req.Args["paranoia_level"].(float64); ok && pf >= 1 && pf <= 4 {
+			paranoia = int(pf)
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "stako-waf", engine, mode)
+		}
+		return applyWAFConfig(resp, logger, enabled, engine, mode, paranoia)
 
 	case agentproto.CmdGitDeploy:
 		repo, _ := req.Args["repo_url"].(string)
@@ -1141,4 +1149,61 @@ func ensureResticRepo(logger *slog.Logger) ([]string, error) {
 		logger.Info("initialized restic backup repository", "repo", repo)
 	}
 	return baseArgs, nil
+}
+
+func applyWAFConfig(resp agentproto.Response, logger *slog.Logger, enabled bool, engine, mode string, paranoia int) agentproto.Response {
+	_ = os.MkdirAll("/etc/stako", 0o750)
+	stateConf := fmt.Sprintf("enabled=%v\nengine=%s\nmode=%s\nparanoia_level=%d\n", enabled, engine, mode, paranoia)
+	if err := os.WriteFile("/etc/stako/waf.conf", []byte(stateConf), 0o640); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+
+	nginxWAFConf := "/etc/nginx/conf.d/stako-waf.conf"
+	if !enabled {
+		if _, err := os.Stat(nginxWAFConf); err == nil {
+			_ = os.Remove(nginxWAFConf)
+			if t := runExec(resp, false, logger, "nginx", "-t"); t.OK {
+				_ = runExec(resp, false, logger, "systemctl", "reload", "nginx")
+			}
+		}
+		resp.OK = true
+		resp.Output = "WAF disabled; configuration saved to /etc/stako/waf.conf"
+		return resp
+	}
+
+	// Check if nginx has modsecurity module available
+	modMatches, _ := filepath.Glob("/etc/nginx/modules-enabled/*modsecurity*")
+	hasModSec := len(modMatches) > 0
+	if !hasModSec {
+		if out, err := exec.Command("nginx", "-V").CombinedOutput(); err == nil && strings.Contains(strings.ToLower(string(out)), "modsecurity") {
+			hasModSec = true
+		}
+	}
+	if !hasModSec {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("WAF configuration saved to /etc/stako/waf.conf (engine=%s, mode=%s, paranoia=%d); nginx ModSecurity module not installed", engine, mode, paranoia)
+		return resp
+	}
+
+	secRuleEngine := "DetectionOnly"
+	if mode == "blocking" {
+		secRuleEngine = "On"
+	}
+	_ = os.MkdirAll("/etc/nginx/modsec", 0o755)
+	modsecMain := fmt.Sprintf("# Managed by Stako\nSecRuleEngine %s\nSecAction \"id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level=%d\"\n", secRuleEngine, paranoia)
+	if err := os.WriteFile("/etc/nginx/modsec/main.conf", []byte(modsecMain), 0o644); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if err := os.WriteFile(nginxWAFConf, []byte("modsecurity on;\nmodsecurity_rules_file /etc/nginx/modsec/main.conf;\n"), 0o644); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	testResp := runExec(resp, false, logger, "nginx", "-t")
+	if !testResp.OK {
+		_ = os.Remove(nginxWAFConf)
+		return testResp
+	}
+	return runExec(resp, false, logger, "systemctl", "reload", "nginx")
 }
