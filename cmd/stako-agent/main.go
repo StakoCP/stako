@@ -215,7 +215,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			_ = os.MkdirAll(confDir, 0o750)
 			ensureDocrootPermissions(username, confDir)
 		}
-		if tmpl != "proxy" && tmpl != "spa" && tmpl != "static" && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+		if tmpl != "proxy" && tmpl != "spa" && tmpl != "static" && phpVer != "" && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
 			ensurePHPFpmPool(username, phpVer, logger)
 		}
 		_ = os.MkdirAll("/var/www/acme", 0o755)
@@ -1164,6 +1164,12 @@ func ensurePHPFpmPool(username, phpVer string, logger *slog.Logger) {
 		return
 	}
 	poolPath := filepath.Join(poolDir, username+".conf")
+	sockPath := fmt.Sprintf("/run/php/php%s-fpm-%s.sock", phpVer, username)
+	if _, err := os.Stat(poolPath); err == nil {
+		if _, err := os.Stat(sockPath); err == nil {
+			return
+		}
+	}
 	poolConf := fmt.Sprintf(`; Managed by Stako. Do not edit manually.
 [%s]
 user = %s
@@ -1179,13 +1185,6 @@ pm.min_spare_servers = 1
 pm.max_spare_servers = 4
 chdir = /home/%s
 `, username, username, username, phpVer, username, username)
-	if existing, err := os.ReadFile(poolPath); err == nil && string(existing) == poolConf {
-		// Ensure socket exists; reload-or-restart only if missing
-		sockPath := fmt.Sprintf("/run/php/php%s-fpm-%s.sock", phpVer, username)
-		if _, err := os.Stat(sockPath); err == nil {
-			return
-		}
-	}
 	if err := os.WriteFile(poolPath, []byte(poolConf), 0o644); err != nil {
 		logger.Warn("failed to write php-fpm pool", "path", poolPath, "err", err)
 		return

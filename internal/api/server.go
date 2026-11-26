@@ -268,6 +268,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Smart System Services Manager (7.21 FR-IN7, Admin)
 	mux.HandleFunc("GET /api/v1/system/services", s.requireAuth(s.handleListSysServices))
+	mux.HandleFunc("GET /api/v1/system/php-versions", s.requireAuth(s.handleListPHPVersions))
 	mux.HandleFunc("POST /api/v1/system/services/{id}/action", s.requireAuth(s.handleSysServiceAction))
 	mux.HandleFunc("POST /api/v1/system/services/{id}/install", s.requireAuth(s.handleInstallSysService))
 	mux.HandleFunc("DELETE /api/v1/system/services/{id}", s.requireAuth(s.handleUninstallSysService))

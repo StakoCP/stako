@@ -216,6 +216,11 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		}
 	}
 
+	// List installed PHP versions
+	if rec := doReq(t, h, "GET", "/api/v1/system/php-versions", nil, cookies, ""); rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"items"`)) {
+		t.Fatalf("php-versions = %d: %s", rec.Code, rec.Body.String())
+	}
+
 	// Read & update per-domain custom nginx config
 	if rec := doReq(t, h, "GET", "/api/v1/domains/"+domResp.Domain.ID+"/custom-nginx", nil, cookies, ""); rec.Code != 200 {
 		t.Fatalf("get custom-nginx = %d: %s", rec.Code, rec.Body.String())

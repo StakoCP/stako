@@ -138,6 +138,40 @@ func (s *Server) handleListSysServices(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"items": out, "total": len(out)})
 }
 
+func (s *Server) handleListPHPVersions(w http.ResponseWriter, r *http.Request) {
+	var specs []map[string]string
+	var order []struct {
+		id  string
+		ver string
+	}
+	for _, m := range managedServices {
+		if len(m.ID) > 7 && m.ID[:3] == "php" && m.ID[len(m.ID)-4:] == "-fpm" {
+			ver := m.ID[3 : len(m.ID)-4]
+			specs = append(specs, map[string]string{"id": m.ID, "unit": m.Unit, "apt_pkg": m.AptPkg})
+			order = append(order, struct {
+				id  string
+				ver string
+			}{id: m.ID, ver: ver})
+		}
+	}
+	var installed []string
+	if resp, err := s.agent.Call(r.Context(), agentproto.CmdSysServiceList, map[string]any{"services": specs}); err == nil && resp.OK {
+		if rawMap, ok := resp.Data["services"].(map[string]any); ok {
+			for _, item := range order {
+				if m, ok := rawMap[item.id].(map[string]any); ok {
+					if inst, _ := m["installed"].(bool); inst {
+						installed = append(installed, item.ver)
+					}
+				}
+			}
+		}
+	}
+	if installed == nil {
+		installed = []string{}
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"items": installed})
+}
+
 func (s *Server) handleSysServiceAction(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	if ac.User.Role != "admin" {

@@ -348,7 +348,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		Stack       string   `json:"stack"`
 		Template    string   `json:"template"`
 		Docroot     string   `json:"docroot"`
-		PHPVersion  string   `json:"php_version"`
+		PHPVersion  *string  `json:"php_version"`
 		SSLMode     string   `json:"ssl_mode"`
 		ForceHTTPS  *bool    `json:"force_https"`
 		HSTS        bool     `json:"hsts"`
@@ -397,8 +397,13 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.PHPVersion == "" {
-		req.PHPVersion = "8.4"
+	phpVersion := ""
+	if req.PHPVersion != nil {
+		if *req.PHPVersion != "none" {
+			phpVersion = strings.TrimSpace(*req.PHPVersion)
+		}
+	} else if req.Template == "php" {
+		phpVersion = "8.4"
 	}
 	if req.SSLMode == "" {
 		req.SSLMode = "none"
@@ -429,7 +434,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		ID: id, UserID: owner.ID, Domain: req.Domain, Aliases: req.Aliases,
 		Stack: req.Stack, Template: req.Template,
 		Docroot:    docroot,
-		PHPVersion: req.PHPVersion, SSLEnabled: req.SSLMode == "letsencrypt", SSLMode: req.SSLMode,
+		PHPVersion: phpVersion, SSLEnabled: req.SSLMode == "letsencrypt", SSLMode: req.SSLMode,
 		ForceHTTPS: forceHTTPS, HSTS: req.HSTS, IPv4ID: req.IPv4ID, IPv6ID: req.IPv6ID,
 		ProxyTarget: req.ProxyTarget, Status: "active",
 	}

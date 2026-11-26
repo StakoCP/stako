@@ -21,6 +21,7 @@
   let domains = $state<Domain[]>([]);
   let ips = $state<IPAddress[]>([]);
   let users = $state<User[]>([]);
+  let phpVersions = $state<string[]>([]);
   let total = $state(0);
   let limit = 25;
   let offset = $state(0);
@@ -192,10 +193,20 @@
     }
   }
 
+  async function loadPhpVersions() {
+    try {
+      const res = await api.get<{ items: string[] }>('/system/php-versions');
+      phpVersions = res.items;
+    } catch {
+      phpVersions = [];
+    }
+  }
+
   onMount(() => {
     loadDomains();
     loadIPs();
     loadUsers();
+    loadPhpVersions();
   });
 
   function handleSearch(e: SubmitEvent) {
@@ -212,7 +223,7 @@
     fStack = 'nginx';
     fTemplate = 'php';
     fDocroot = '';
-    fPhpVersion = '8.3';
+    fPhpVersion = phpVersions[0] ?? '';
     fSslMode = 'none';
     fForceHttps = false;
     fHsts = false;
@@ -231,7 +242,7 @@
     fStack = d.stack;
     fTemplate = d.template;
     fDocroot = d.docroot || '';
-    fPhpVersion = d.php_version || '8.3';
+    fPhpVersion = d.php_version || '';
     fSslMode = d.ssl_mode;
     fForceHttps = d.force_https;
     fHsts = d.hsts;
@@ -650,7 +661,15 @@
       </div>
       <div class="form-group">
         <label class="form-label" for="d-php">{i18n.t.domains.phpVersion}</label>
-        <input id="d-php" type="text" class="form-control" bind:value={fPhpVersion} placeholder="8.3" />
+        <select id="d-php" class="form-control" bind:value={fPhpVersion}>
+          <option value="">{i18n.t.domains.noPhp}</option>
+          {#each phpVersions as ver (ver)}
+            <option value={ver}>PHP {ver}</option>
+          {/each}
+          {#if fPhpVersion && !phpVersions.includes(fPhpVersion)}
+            <option value={fPhpVersion}>PHP {fPhpVersion}</option>
+          {/if}
+        </select>
       </div>
     </div>
 
