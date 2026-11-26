@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -1192,14 +1193,15 @@ logfile /var/log/redis/redis-server-%s.log
 		for _, e := range entries {
 			info, _ := e.Info()
 			var size int64
-			var mode, modTime string
+			var mode, octalMode, modTime string
 			if info != nil {
 				size = info.Size()
 				mode = info.Mode().String()
+				octalMode = fmt.Sprintf("%04o", info.Mode().Perm())
 				modTime = info.ModTime().UTC().Format("2006-01-02T15:04:05Z")
 			}
 			items = append(items, map[string]any{
-				"name": e.Name(), "is_dir": e.IsDir(), "size": size, "mode": mode, "mod_time": modTime,
+				"name": e.Name(), "is_dir": e.IsDir(), "size": size, "mode": mode, "octal_mode": octalMode, "mod_time": modTime,
 			})
 		}
 		resp.OK = true
@@ -1222,17 +1224,76 @@ logfile /var/log/redis/redis-server-%s.log
 		resp.Output = string(b)
 		return resp
 
+	case agentproto.CmdFileReadB64:
+		p, _ := req.Args["path"].(string)
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{"b64": base64.StdEncoding.EncodeToString([]byte("dry-run:" + p))}
+			return resp
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if info.IsDir() {
+			resp.Error = "path is a directory"
+			return resp
+		}
+		if info.Size() > 32*1024*1024 {
+			resp.Error = "file exceeds 32MB limit"
+			return resp
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"b64": base64.StdEncoding.EncodeToString(b)}
+		return resp
+
 	case agentproto.CmdFileWrite:
 		p, _ := req.Args["path"].(string)
 		content, _ := req.Args["content"].(string)
+		username, _ := req.Args["username"].(string)
 		if dryRun {
 			resp.OK = true
 			resp.Output = "[dry-run] write " + p
 			return resp
 		}
+		_ = os.MkdirAll(filepath.Dir(p), 0o750)
 		if err := os.WriteFile(p, []byte(content), 0o640); err != nil {
 			resp.Error = err.Error()
 			return resp
+		}
+		if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			_ = exec.Command("chown", username+":www-data", p).Run()
+		}
+		resp.OK = true
+		return resp
+
+	case agentproto.CmdFileWriteB64:
+		p, _ := req.Args["path"].(string)
+		b64, _ := req.Args["b64"].(string)
+		username, _ := req.Args["username"].(string)
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] upload " + p
+			return resp
+		}
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		_ = os.MkdirAll(filepath.Dir(p), 0o750)
+		if err := os.WriteFile(p, raw, 0o640); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			_ = exec.Command("chown", username+":www-data", p).Run()
 		}
 		resp.OK = true
 		return resp
@@ -1250,6 +1311,124 @@ logfile /var/log/redis/redis-server-%s.log
 		}
 		resp.OK = true
 		return resp
+
+	case agentproto.CmdFileMkdir:
+		p, _ := req.Args["path"].(string)
+		username, _ := req.Args["username"].(string)
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] mkdir " + p
+			return resp
+		}
+		if err := os.MkdirAll(p, 0o750); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			ensureDocrootPermissions(username, p)
+		}
+		resp.OK = true
+		return resp
+
+	case agentproto.CmdFileCopy:
+		src, _ := req.Args["src"].(string)
+		dst, _ := req.Args["dst"].(string)
+		username, _ := req.Args["username"].(string)
+		if dryRun {
+			return runExec(resp, true, logger, "cp", "-a", src, dst)
+		}
+		_ = os.MkdirAll(filepath.Dir(dst), 0o750)
+		r := runExec(resp, false, logger, "cp", "-a", src, dst)
+		if r.OK && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			_ = exec.Command("chown", "-R", username+":www-data", dst).Run()
+		}
+		return r
+
+	case agentproto.CmdFileMove:
+		src, _ := req.Args["src"].(string)
+		dst, _ := req.Args["dst"].(string)
+		username, _ := req.Args["username"].(string)
+		if dryRun {
+			return runExec(resp, true, logger, "mv", src, dst)
+		}
+		_ = os.MkdirAll(filepath.Dir(dst), 0o750)
+		r := runExec(resp, false, logger, "mv", src, dst)
+		if r.OK && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			_ = exec.Command("chown", "-R", username+":www-data", dst).Run()
+		}
+		return r
+
+	case agentproto.CmdFileChmod:
+		p, _ := req.Args["path"].(string)
+		modeStr, _ := req.Args["mode"].(string)
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] chmod " + modeStr + " " + p
+			return resp
+		}
+		mVal, err := strconv.ParseUint(modeStr, 8, 32)
+		if err != nil {
+			resp.Error = "invalid octal mode: " + modeStr
+			return resp
+		}
+		if err := os.Chmod(p, os.FileMode(mVal)); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		resp.OK = true
+		return resp
+
+	case agentproto.CmdFileExtract:
+		src, _ := req.Args["src"].(string)
+		dstDir, _ := req.Args["dst_dir"].(string)
+		username, _ := req.Args["username"].(string)
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] extract " + src + " -> " + dstDir
+			return resp
+		}
+		_ = os.MkdirAll(dstDir, 0o750)
+		low := strings.ToLower(src)
+		var r agentproto.Response
+		switch {
+		case strings.HasSuffix(low, ".zip"):
+			r = runExec(resp, false, logger, "unzip", "-o", src, "-d", dstDir)
+		case strings.HasSuffix(low, ".tar.gz") || strings.HasSuffix(low, ".tgz"):
+			r = runExec(resp, false, logger, "tar", "-xzf", src, "-C", dstDir)
+		case strings.HasSuffix(low, ".tar.bz2") || strings.HasSuffix(low, ".tbz2"):
+			r = runExec(resp, false, logger, "tar", "-xjf", src, "-C", dstDir)
+		case strings.HasSuffix(low, ".tar"):
+			r = runExec(resp, false, logger, "tar", "-xf", src, "-C", dstDir)
+		default:
+			resp.Error = "unsupported archive format (supported: .zip, .tar.gz, .tgz, .tar.bz2, .tar)"
+			return resp
+		}
+		if r.OK && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			_ = exec.Command("chown", "-R", username+":www-data", dstDir).Run()
+		}
+		return r
+
+	case agentproto.CmdFileCompress:
+		src, _ := req.Args["src"].(string)
+		dst, _ := req.Args["dst"].(string)
+		username, _ := req.Args["username"].(string)
+		if dryRun {
+			resp.OK = true
+			resp.Output = "[dry-run] compress " + src + " -> " + dst
+			return resp
+		}
+		parent := filepath.Dir(src)
+		base := filepath.Base(src)
+		var r agentproto.Response
+		if strings.HasSuffix(strings.ToLower(dst), ".zip") {
+			r = runExec(resp, false, logger, "bash", "-c", fmt.Sprintf("cd %q && zip -r %q %q", parent, dst, base))
+		} else {
+			r = runExec(resp, false, logger, "tar", "-czf", dst, "-C", parent, base)
+		}
+		if r.OK && username != "" && agentproto.ValidateLinuxUsername(username) == nil {
+			_ = exec.Command("chown", username+":www-data", dst).Run()
+		}
+		return r
 
 	case agentproto.CmdTerminalExec:
 		username, _ := req.Args["username"].(string)

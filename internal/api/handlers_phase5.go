@@ -3,9 +3,13 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -382,7 +386,9 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
 		return
 	}
-	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileWrite, map[string]any{"path": fullPath, "content": req.Content})
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileWrite, map[string]any{
+		"path": fullPath, "content": req.Content, "username": ac.User.Username,
+	})
 	if err != nil || !resp.OK {
 		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to write file", "")
 		return
@@ -415,6 +421,291 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = s.agent.Call(r.Context(), agentproto.CmdFileDelete, map[string]any{"path": fullPath})
 	s.audit(r, ac.User, "file.delete", "file", req.Path, "success", nil)
+	WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) serveAgentFile(w http.ResponseWriter, r *http.Request, attachment bool) {
+	ac := GetAuth(r)
+	reqPath := r.URL.Query().Get("path")
+	fullPath, err := resolveUserFilePath(ac.User.Username, reqPath)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileReadB64, map[string]any{"path": fullPath})
+	if err != nil || !resp.OK {
+		WriteProblem(w, http.StatusNotFound, "not-found", "Cannot read file", "")
+		return
+	}
+	b64, _ := resp.Data["b64"].(string)
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Invalid file encoding", "")
+		return
+	}
+	name := filepath.Base(fullPath)
+	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	if ct == "" {
+		ct = http.DetectContentType(raw)
+	}
+	disp := "inline"
+	if attachment {
+		disp = "attachment"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`%s; filename="%s"`, disp, strings.ReplaceAll(name, `"`, "")))
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
+	s.serveAgentFile(w, r, true)
+}
+
+func (s *Server) handleRawFile(w http.ResponseWriter, r *http.Request) {
+	s.serveAgentFile(w, r, false)
+}
+
+func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32*1024*1024)
+	if err := r.ParseMultipartForm(32 * 1024 * 1024); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid multipart upload", err.Error())
+		return
+	}
+	dirPath := r.FormValue("path")
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Missing file field", err.Error())
+		return
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, 32*1024*1024))
+	if err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Failed to read upload", err.Error())
+		return
+	}
+	baseName := filepath.Base(hdr.Filename)
+	if baseName == "" || baseName == "." || baseName == ".." {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid filename", "")
+		return
+	}
+	relTarget := path.Join("/", dirPath, baseName)
+	fullPath, err := resolveUserFilePath(ac.User.Username, relTarget)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileWriteB64, map[string]any{
+		"path":     fullPath,
+		"b64":      base64.StdEncoding.EncodeToString(raw),
+		"username": ac.User.Username,
+	})
+	if err != nil || !resp.OK {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to save uploaded file", "")
+		return
+	}
+	s.audit(r, ac.User, "file.upload", "file", relTarget, "success", map[string]any{"size": len(raw)})
+	WriteJSON(w, http.StatusCreated, map[string]any{"ok": true, "path": relTarget})
+}
+
+func (s *Server) handleMkdirFile(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	fullPath, err := resolveUserFilePath(ac.User.Username, req.Path)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileMkdir, map[string]any{
+		"path": fullPath, "username": ac.User.Username,
+	})
+	if err != nil || !resp.OK {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to create directory", "")
+		return
+	}
+	s.audit(r, ac.User, "file.mkdir", "file", req.Path, "success", nil)
+	WriteJSON(w, http.StatusCreated, map[string]any{"ok": true})
+}
+
+func (s *Server) handleCopyFile(w http.ResponseWriter, r *http.Request) {
+	s.handleCopyOrMoveFile(w, r, false)
+}
+
+func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request) {
+	s.handleCopyOrMoveFile(w, r, true)
+}
+
+func (s *Server) handleCopyOrMoveFile(w http.ResponseWriter, r *http.Request, move bool) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Src string `json:"src"`
+		Dst string `json:"dst"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	fullSrc, err := resolveUserFilePath(ac.User.Username, req.Src)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	fullDst, err := resolveUserFilePath(ac.User.Username, req.Dst)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	if path.Clean("/"+req.Src) == "/" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Cannot move/copy home root", "")
+		return
+	}
+	cmd := agentproto.CmdFileCopy
+	auditAct := "file.copy"
+	if move {
+		cmd = agentproto.CmdFileMove
+		auditAct = "file.move"
+	}
+	resp, err := s.agent.Call(r.Context(), cmd, map[string]any{
+		"src": fullSrc, "dst": fullDst, "username": ac.User.Username,
+	})
+	if err != nil || !resp.OK {
+		errMsg := ""
+		if resp.Error != "" {
+			errMsg = resp.Error
+		}
+		WriteProblem(w, http.StatusInternalServerError, "internal", "File operation failed", errMsg)
+		return
+	}
+	s.audit(r, ac.User, auditAct, "file", req.Src, "success", map[string]any{"dst": req.Dst})
+	WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleChmodFile(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+		Mode string `json:"mode"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	req.Mode = strings.TrimSpace(req.Mode)
+	if len(req.Mode) < 3 || len(req.Mode) > 4 {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Mode must be 3 or 4 octal digits (e.g. 0644, 755)", "")
+		return
+	}
+	for _, ch := range req.Mode {
+		if ch < '0' || ch > '7' {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Mode must contain only octal digits 0-7", "")
+			return
+		}
+	}
+	fullPath, err := resolveUserFilePath(ac.User.Username, req.Path)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileChmod, map[string]any{
+		"path": fullPath, "mode": req.Mode,
+	})
+	if err != nil || !resp.OK {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to change permissions", "")
+		return
+	}
+	s.audit(r, ac.User, "file.chmod", "file", req.Path, "success", map[string]any{"mode": req.Mode})
+	WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleExtractFile(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Src    string `json:"src"`
+		DstDir string `json:"dst_dir"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	fullSrc, err := resolveUserFilePath(ac.User.Username, req.Src)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	fullDst, err := resolveUserFilePath(ac.User.Username, req.DstDir)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileExtract, map[string]any{
+		"src": fullSrc, "dst_dir": fullDst, "username": ac.User.Username,
+	})
+	if err != nil || !resp.OK {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Failed to extract archive", resp.Error+" "+resp.Output)
+		return
+	}
+	s.audit(r, ac.User, "file.extract", "file", req.Src, "success", map[string]any{"dst_dir": req.DstDir})
+	WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleCompressFile(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Src string `json:"src"`
+		Dst string `json:"dst"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	fullSrc, err := resolveUserFilePath(ac.User.Username, req.Src)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	fullDst, err := resolveUserFilePath(ac.User.Username, req.Dst)
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdFileCompress, map[string]any{
+		"src": fullSrc, "dst": fullDst, "username": ac.User.Username,
+	})
+	if err != nil || !resp.OK {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to compress file", resp.Error+" "+resp.Output)
+		return
+	}
+	s.audit(r, ac.User, "file.compress", "file", req.Src, "success", map[string]any{"dst": req.Dst})
 	WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

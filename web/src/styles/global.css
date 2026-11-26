@@ -1330,3 +1330,48 @@ progress.score-progress.score-low::-moz-progress-bar {
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* File Manager Editor & Previews */
+.ace-host {
+  width: 100%;
+  height: 460px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.media-preview {
+  max-width: 100%;
+  max-height: 480px;
+  display: block;
+  margin: 0 auto;
+  border-radius: var(--radius-md);
+}
+
+.audio-preview {
+  width: 100%;
+  display: block;
+  margin: 12px auto;
+}
+
+.pdf-preview {
+  width: 100%;
+  height: 520px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.perm-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.perm-grid-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}

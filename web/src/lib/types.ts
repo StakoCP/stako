@@ -478,6 +478,7 @@ export interface FileEntry {
   is_dir: boolean;
   size: number;
   mode: string;
+  octal_mode?: string;
   mod_time: string;
 }
 

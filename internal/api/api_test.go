@@ -547,6 +547,33 @@ func TestPhase5DNSCronFilesMonitoringAndTerminal(t *testing.T) {
 	if rec := doReq(t, h, "GET", "/api/v1/files?path=/", nil, cookies, ""); rec.Code != 200 {
 		t.Fatalf("files = %d", rec.Code)
 	}
+	if rec := doReq(t, h, "POST", "/api/v1/files/mkdir", map[string]any{"path": "/public_html/assets"}, cookies, csrf); rec.Code != 201 {
+		t.Fatalf("mkdir = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/files/copy", map[string]any{"src": "/index.html", "dst": "/index2.html"}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("copy = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/files/move", map[string]any{"src": "/index2.html", "dst": "/index3.html"}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("move = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/files/chmod", map[string]any{"path": "/index3.html", "mode": "0644"}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("chmod = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/files/chmod", map[string]any{"path": "/index3.html", "mode": "999"}, cookies, csrf); rec.Code != 422 {
+		t.Fatalf("expected 422 for invalid chmod, got %d", rec.Code)
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/files/download?path=/index.html", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("download = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/files/raw?path=/logo.png", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("raw = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/files/compress", map[string]any{"src": "/public_html", "dst": "/public_html.zip"}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("compress = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/files/extract", map[string]any{"src": "/public_html.zip", "dst_dir": "/extracted"}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("extract = %d: %s", rec.Code, rec.Body.String())
+	}
 	if rec := doReq(t, h, "GET", "/api/v1/monitoring/metrics", nil, cookies, ""); rec.Code != 200 {
 		t.Fatalf("metrics = %d", rec.Code)
 	}
