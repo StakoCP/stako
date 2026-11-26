@@ -76,6 +76,22 @@ You can also trigger updates directly from the Dashboard.
 
 ---
 
+## Supported System Services
+
+Stako automatically detects installed system services on Ubuntu and lets administrators **start, stop, restart, install, uninstall, and edit configurations** directly from the panel (protected core services cannot be stopped or uninstalled):
+
+| Category | Services (`apt` package / systemd unit) |
+| :--- | :--- |
+| **Web & PHP** | Nginx (`nginx`), Apache2 (`apache2`), PHP-FPM 8.4 (`php8.4-fpm`), PHP-FPM 8.3 (`php8.3-fpm`), PHP-FPM 8.5 (`php8.5-fpm`) |
+| **Database & Queue** | MariaDB / MySQL (`mariadb-server` / `mariadb`), PostgreSQL (`postgresql`), Redis (`redis-server`), RabbitMQ (`rabbitmq-server`) |
+| **DNS** | PowerDNS (`pdns-server` / `pdns`), BIND9 (`bind9`) |
+| **Mail** | Postfix (`postfix`), Dovecot (`dovecot-core` / `dovecot`), Rspamd (`rspamd`) |
+| **FTP** | ProFTPD FTPS (`proftpd-basic` / `proftpd`) |
+| **Container** | Docker Engine (`docker-ce` / `docker`) |
+| **Security** | Fail2Ban (`fail2ban`), ClamAV (`clamav-daemon`), nftables (`nftables`, *protected*), OpenSSH (`openssh-server` / `ssh`, *protected*) |
+
+---
+
 ## Architecture
 
 - **`cmd/stako-core`**: Non-root REST API server, SQLite (WAL) store, Argon2id + TOTP 2FA, RBAC, audit chain, job queue, AES-256-GCM envelope encryption, embedded Astro + Svelte Web UI (port `8083`).
