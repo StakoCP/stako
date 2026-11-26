@@ -377,6 +377,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		return runExec(resp, dryRun, logger, "certbot", "certonly", "--webroot", "-w", "/var/www/acme", "-d", domain, "--non-interactive", "--agree-tos")
 
 	case agentproto.CmdAppDeploy:
+		appID, _ := req.Args["app_id"].(string)
 		unitName, _ := req.Args["unit_name"].(string)
 		unitBody, _ := req.Args["unit_body"].(string)
 		if !strings.HasPrefix(unitName, "stako-app-") {
@@ -385,6 +386,19 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		}
 		if dryRun {
 			return runExec(resp, dryRun, logger, "systemctl", "enable", "--now", unitName)
+		}
+		if appID == "" {
+			appID = strings.TrimPrefix(unitName, "stako-app-")
+		}
+		if envMap, ok := req.Args["env"].(map[string]any); ok {
+			_ = os.MkdirAll("/etc/stako/apps", 0o750)
+			var lines []string
+			for k, v := range envMap {
+				if vs, ok := v.(string); ok && !strings.ContainsAny(k, "=\n\r") {
+					lines = append(lines, k+"="+strings.ReplaceAll(vs, "\n", ""))
+				}
+			}
+			_ = os.WriteFile("/etc/stako/apps/"+appID+".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 		}
 		if err := os.WriteFile("/etc/systemd/system/"+unitName+".service", []byte(unitBody), 0o644); err != nil {
 			resp.Error = err.Error()
@@ -407,6 +421,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			r := runExec(resp, dryRun, logger, "systemctl", "disable", "--now", unitName)
 			if !dryRun {
 				_ = os.Remove("/etc/systemd/system/" + unitName + ".service")
+				_ = os.Remove("/etc/stako/apps/" + strings.TrimPrefix(unitName, "stako-app-") + ".env")
 			}
 			return r
 		default:
@@ -492,14 +507,50 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		engine, _ := req.Args["engine"].(string)
 		dbName, _ := req.Args["name"].(string)
 		dbUser, _ := req.Args["db_user"].(string)
+		dbPass, _ := req.Args["db_password"].(string)
 		if err := agentproto.ValidateDBIdent(dbName); err != nil {
 			resp.Error = err.Error()
 			return resp
 		}
-		if engine == "postgres" {
-			return runExec(resp, dryRun, logger, "sudo", "-u", "postgres", "createdb", "-O", dbUser, dbName)
+		if dbUser == "" {
+			dbUser = dbName
 		}
-		return runExec(resp, dryRun, logger, "mariadb", "-e", "CREATE DATABASE IF NOT EXISTS `"+dbName+"`;")
+		if err := agentproto.ValidateDBIdent(dbUser); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		escPass := strings.ReplaceAll(dbPass, "'", "''")
+		if engine == "postgres" {
+			if dryRun {
+				return runExec(resp, true, logger, "sudo", "-u", "postgres", "createdb", "-O", dbUser, dbName)
+			}
+			roleSQL := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE ROLE %s WITH LOGIN PASSWORD '%s'; ELSE ALTER ROLE %s WITH PASSWORD '%s'; END IF; END $$;", dbUser, dbUser, escPass, dbUser, escPass)
+			if r := runExec(resp, false, logger, "sudo", "-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c", roleSQL); !r.OK {
+				return r
+			}
+			return runExec(resp, false, logger, "sudo", "-u", "postgres", "createdb", "-O", dbUser, dbName)
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "mariadb", "-e", "CREATE DATABASE IF NOT EXISTS `"+dbName+"`;")
+		}
+		hosts := []string{"localhost", "127.0.0.1"}
+		if rawHosts, ok := req.Args["remote_hosts"].([]any); ok && len(rawHosts) > 0 {
+			hosts = []string{"localhost"}
+			for _, h := range rawHosts {
+				if hs, ok := h.(string); ok && hs != "" && !strings.ContainsAny(hs, "'`;\n\r ") {
+					hosts = append(hosts, hs)
+				}
+			}
+		}
+		var stmts []string
+		stmts = append(stmts, "CREATE DATABASE IF NOT EXISTS `"+dbName+"`;")
+		for _, h := range hosts {
+			stmts = append(stmts, fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';", dbUser, h, escPass))
+			stmts = append(stmts, fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s';", dbUser, h, escPass))
+			stmts = append(stmts, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s';", dbName, dbUser, h))
+		}
+		stmts = append(stmts, "FLUSH PRIVILEGES;")
+		return runExec(resp, false, logger, "mariadb", "-e", strings.Join(stmts, " "))
 
 	case agentproto.CmdDBDelete:
 		engine, _ := req.Args["engine"].(string)
@@ -936,7 +987,38 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 	case agentproto.CmdGitDeploy:
 		repo, _ := req.Args["repo_url"].(string)
 		branch, _ := req.Args["branch"].(string)
-		return runExec(resp, dryRun, logger, "git", "clone", "--depth", "1", "-b", branch, repo)
+		buildCmd, _ := req.Args["build_cmd"].(string)
+		username, _ := req.Args["username"].(string)
+		targetDir, _ := req.Args["target_dir"].(string)
+		if branch == "" {
+			branch = "main"
+		}
+		if dryRun || targetDir == "" || username == "" || agentproto.ValidateLinuxUsername(username) != nil {
+			return runExec(resp, dryRun, logger, "git", "clone", "--depth", "1", "-b", branch, repo)
+		}
+		_ = os.MkdirAll(filepath.Dir(targetDir), 0o750)
+		ensureDocrootPermissions(username, targetDir)
+		if _, err := os.Stat(filepath.Join(targetDir, ".git")); err == nil {
+			if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "-C", targetDir, "fetch", "origin", branch); !r.OK {
+				return r
+			}
+			if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "-C", targetDir, "checkout", "-f", branch); !r.OK {
+				return r
+			}
+			if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "-C", targetDir, "reset", "--hard", "origin/"+branch); !r.OK {
+				return r
+			}
+		} else {
+			if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "clone", "--depth", "1", "-b", branch, repo, targetDir); !r.OK {
+				return r
+			}
+		}
+		if strings.TrimSpace(buildCmd) != "" {
+			return runExec(resp, false, logger, "sudo", "-u", username, "bash", "-lc", "cd "+targetDir+" && "+buildCmd)
+		}
+		resp.OK = true
+		resp.Output = "deployed " + repo + "@" + branch + " to " + targetDir
+		return resp
 
 	case agentproto.CmdPanelImport:
 		src, _ := req.Args["source_panel"].(string)

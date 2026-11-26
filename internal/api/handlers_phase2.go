@@ -92,7 +92,11 @@ func (s *Server) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "db.create", ac.User.ID, map[string]any{
-		"engine": db.Engine, "name": db.Name, "db_user": db.DBUser,
+		"engine":       db.Engine,
+		"name":         db.Name,
+		"db_user":      db.DBUser,
+		"db_password":  req.DBPassword,
+		"remote_hosts": db.RemoteHosts,
 	}); err == nil {
 		jobID = &j.ID
 	}

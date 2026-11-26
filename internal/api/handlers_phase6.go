@@ -158,9 +158,20 @@ func (s *Server) handleTriggerGitDeploy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.store.TouchGitDeploy(r.Context(), gd.ID)
+	owner, _ := s.store.GetUserByID(r.Context(), gd.UserID)
+	targetDir := "/home/" + owner.Username + "/git/" + gd.ID
+	if gd.DomainID != "" {
+		if dom, err := s.store.GetDomain(r.Context(), gd.DomainID); err == nil && dom.Docroot != "" {
+			targetDir = dom.Docroot
+		}
+	}
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "git.deploy", ac.User.ID, map[string]any{
-		"repo_url": gd.RepoURL, "branch": gd.Branch, "build_cmd": gd.BuildCmd,
+		"repo_url":   gd.RepoURL,
+		"branch":     gd.Branch,
+		"build_cmd":  gd.BuildCmd,
+		"username":   owner.Username,
+		"target_dir": targetDir,
 	}); err == nil {
 		jobID = &j.ID
 	}

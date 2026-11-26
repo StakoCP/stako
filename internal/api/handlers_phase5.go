@@ -367,18 +367,49 @@ func (s *Server) handleMonitoringMetrics(w http.ResponseWriter, r *http.Request)
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
 		return
 	}
+	var cpuPct, memPct, diskPct float64
+	agentStatus := "inactive"
+	if resp, err := s.agent.Call(r.Context(), agentproto.CmdSystemInfo, nil); err == nil && resp.OK {
+		agentStatus = "active"
+		if v, ok := resp.Data["cpu_percent"].(float64); ok {
+			cpuPct = v
+		}
+		if v, ok := resp.Data["memory_percent"].(float64); ok {
+			memPct = v
+		}
+		if v, ok := resp.Data["disk_percent"].(float64); ok {
+			diskPct = v
+		}
+	}
+	services := []map[string]string{
+		{"name": "stako-core", "status": "active"},
+		{"name": "stako-agent", "status": agentStatus},
+	}
+	specs := make([]map[string]string, 0, len(managedServices))
+	for _, m := range managedServices {
+		specs = append(specs, map[string]string{"id": m.ID, "unit": m.Unit, "apt_pkg": m.AptPkg})
+	}
+	if resp, err := s.agent.Call(r.Context(), agentproto.CmdSysServiceList, map[string]any{"services": specs}); err == nil && resp.OK {
+		if rawMap, ok := resp.Data["services"].(map[string]any); ok {
+			for _, m := range managedServices {
+				if info, ok := rawMap[m.ID].(map[string]any); ok {
+					if inst, _ := info["installed"].(bool); inst {
+						act, _ := info["active"].(string)
+						if act == "" {
+							act = "inactive"
+						}
+						services = append(services, map[string]string{"name": m.ID, "status": act})
+					}
+				}
+			}
+		}
+	}
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"cpu_percent":    14.2,
-		"memory_percent": 38.5,
-		"disk_percent":   24.0,
-		"services": []map[string]string{
-			{"name": "stako-core", "status": "active"},
-			{"name": "stako-agent", "status": "active"},
-			{"name": "nginx", "status": "active"},
-			{"name": "mariadb", "status": "active"},
-			{"name": "postfix", "status": "active"},
-		},
-		"timestamp": time.Now().UTC(),
+		"cpu_percent":    cpuPct,
+		"memory_percent": memPct,
+		"disk_percent":   diskPct,
+		"services":       services,
+		"timestamp":      time.Now().UTC(),
 	})
 }
 

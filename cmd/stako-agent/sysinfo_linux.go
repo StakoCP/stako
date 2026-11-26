@@ -4,9 +4,12 @@
 package main
 
 import (
+	"math"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func collectSystemInfo() map[string]any {
@@ -29,6 +32,11 @@ func collectSystemInfo() map[string]any {
 			l5, _ := strconv.ParseFloat(fields[1], 64)
 			l15, _ := strconv.ParseFloat(fields[2], 64)
 			data["load_avg"] = []float64{l1, l5, l15}
+			cpus := float64(runtime.NumCPU())
+			if cpus > 0 {
+				cpuPct := math.Min(100, math.Round((l1/cpus)*1000)/10)
+				data["cpu_percent"] = cpuPct
+			}
 		}
 	}
 	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
@@ -49,7 +57,17 @@ func collectSystemInfo() map[string]any {
 		if total > 0 {
 			data["memory_total_bytes"] = total
 			data["memory_available_bytes"] = avail
+			data["memory_percent"] = math.Round((float64(total-avail)/float64(total))*1000) / 10
 		}
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs("/", &st); err == nil && st.Blocks > 0 {
+		total := st.Blocks * uint64(st.Bsize)
+		free := st.Bavail * uint64(st.Bsize)
+		used := total - free
+		data["disk_total_bytes"] = total
+		data["disk_free_bytes"] = free
+		data["disk_percent"] = math.Round((float64(used)/float64(total))*1000) / 10
 	}
 	return data
 }

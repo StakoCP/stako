@@ -961,7 +961,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 	})
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "app.deploy", ac.User.ID, map[string]any{
-		"unit_name": a.UnitName, "unit_body": unitBody,
+		"app_id": a.ID, "unit_name": a.UnitName, "unit_body": unitBody, "env": req.Env,
 	}); err == nil {
 		jobID = &j.ID
 	}
@@ -1089,9 +1089,10 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	unitBody, _ := render.RenderAppSystemdUnit(render.AppUnitData{
 		ID: a.ID, Name: a.Name, Username: owner.Username, WorkDir: a.WorkDir, Port: a.Port, Command: a.Command,
 	})
+	envMap, _ := s.decryptEnvMap(a.EnvEnc)
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "app.deploy", ac.User.ID, map[string]any{
-		"unit_name": a.UnitName, "unit_body": unitBody,
+		"app_id": a.ID, "unit_name": a.UnitName, "unit_body": unitBody, "env": envMap,
 	}); err == nil {
 		jobID = &j.ID
 	}
