@@ -1151,6 +1151,11 @@ func ensureResticRepo(logger *slog.Logger) ([]string, error) {
 	return baseArgs, nil
 }
 
+func isPkgInstalled(pkg string) bool {
+	out, err := exec.Command("dpkg-query", "-W", "-f=${Status}", pkg).Output()
+	return err == nil && strings.TrimSpace(string(out)) == "install ok installed"
+}
+
 func applyWAFConfig(resp agentproto.Response, logger *slog.Logger, enabled bool, engine, mode string, paranoia int) agentproto.Response {
 	_ = os.MkdirAll("/etc/stako", 0o750)
 	stateConf := fmt.Sprintf("enabled=%v\nengine=%s\nmode=%s\nparanoia_level=%d\n", enabled, engine, mode, paranoia)
@@ -1159,12 +1164,30 @@ func applyWAFConfig(resp agentproto.Response, logger *slog.Logger, enabled bool,
 		return resp
 	}
 
+	hasNginx := isPkgInstalled("nginx")
+	hasApache := isPkgInstalled("apache2")
 	nginxWAFConf := "/etc/nginx/conf.d/stako-waf.conf"
+	apacheAvail := "/etc/apache2/conf-available/stako-waf.conf"
+	apacheEnabled := "/etc/apache2/conf-enabled/stako-waf.conf"
+
 	if !enabled {
-		if _, err := os.Stat(nginxWAFConf); err == nil {
-			_ = os.Remove(nginxWAFConf)
-			if t := runExec(resp, false, logger, "nginx", "-t"); t.OK {
-				_ = runExec(resp, false, logger, "systemctl", "reload", "nginx")
+		if hasNginx {
+			if _, err := os.Stat(nginxWAFConf); err == nil {
+				_ = os.Remove(nginxWAFConf)
+				if t := runExec(resp, false, logger, "nginx", "-t"); t.OK {
+					_ = runExec(resp, false, logger, "systemctl", "reload", "nginx")
+				}
+			}
+		}
+		if hasApache {
+			if _, err := os.Stat(apacheEnabled); err == nil {
+				_ = os.Remove(apacheEnabled)
+			}
+			if _, err := os.Stat(apacheAvail); err == nil {
+				_ = os.Remove(apacheAvail)
+				if t := runExec(resp, false, logger, "apache2ctl", "-t"); t.OK {
+					_ = runExec(resp, false, logger, "systemctl", "reload", "apache2")
+				}
 			}
 		}
 		resp.OK = true
@@ -1172,45 +1195,97 @@ func applyWAFConfig(resp agentproto.Response, logger *slog.Logger, enabled bool,
 		return resp
 	}
 
-	// Check if nginx has modsecurity module available; auto-install if missing
-	hasModSec := checkNginxModSecurity()
-	if !hasModSec {
-		logger.Info("nginx modsecurity module not found, installing libnginx-mod-http-modsecurity")
-		_ = exec.Command("apt-get", "update", "-y").Run()
-		cmd := exec.Command("apt-get", "install", "-y", "libnginx-mod-http-modsecurity")
-		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			resp.Output = strings.TrimSpace(string(out))
-			resp.Error = fmt.Sprintf("failed to install libnginx-mod-http-modsecurity: %v", err)
-			return resp
-		}
-		hasModSec = checkNginxModSecurity()
-		if !hasModSec {
-			resp.Error = "libnginx-mod-http-modsecurity installed, but nginx modsecurity module is still not detected"
-			return resp
-		}
-	}
-
 	secRuleEngine := "DetectionOnly"
 	if mode == "blocking" {
 		secRuleEngine = "On"
 	}
-	_ = os.MkdirAll("/etc/nginx/modsec", 0o755)
-	modsecMain := fmt.Sprintf("# Managed by Stako\nSecRuleEngine %s\nSecAction \"id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level=%d\"\n", secRuleEngine, paranoia)
-	if err := os.WriteFile("/etc/nginx/modsec/main.conf", []byte(modsecMain), 0o644); err != nil {
-		resp.Error = err.Error()
-		return resp
+	var applied []string
+
+	if hasNginx {
+		if !checkNginxModSecurity() {
+			logger.Info("nginx modsecurity module not found, installing libnginx-mod-http-modsecurity")
+			_ = exec.Command("apt-get", "update", "-y").Run()
+			cmd := exec.Command("apt-get", "install", "-y", "libnginx-mod-http-modsecurity")
+			cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				resp.Output = strings.TrimSpace(string(out))
+				resp.Error = fmt.Sprintf("failed to install libnginx-mod-http-modsecurity: %v", err)
+				return resp
+			}
+			if !checkNginxModSecurity() {
+				resp.Error = "libnginx-mod-http-modsecurity installed, but nginx modsecurity module is still not detected"
+				return resp
+			}
+		}
+		_ = os.MkdirAll("/etc/nginx/modsec", 0o755)
+		modsecMain := fmt.Sprintf("# Managed by Stako\nSecRuleEngine %s\nSecAction \"id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level=%d\"\n", secRuleEngine, paranoia)
+		if err := os.WriteFile("/etc/nginx/modsec/main.conf", []byte(modsecMain), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if err := os.WriteFile(nginxWAFConf, []byte("modsecurity on;\nmodsecurity_rules_file /etc/nginx/modsec/main.conf;\n"), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		testResp := runExec(resp, false, logger, "nginx", "-t")
+		if !testResp.OK {
+			_ = os.Remove(nginxWAFConf)
+			return testResp
+		}
+		if r := runExec(resp, false, logger, "systemctl", "reload", "nginx"); !r.OK {
+			return r
+		}
+		applied = append(applied, "nginx")
 	}
-	if err := os.WriteFile(nginxWAFConf, []byte("modsecurity on;\nmodsecurity_rules_file /etc/nginx/modsec/main.conf;\n"), 0o644); err != nil {
-		resp.Error = err.Error()
-		return resp
+
+	if hasApache {
+		if !checkApacheModSecurity() {
+			if _, err := os.Stat("/etc/apache2/mods-available/security2.load"); os.IsNotExist(err) {
+				logger.Info("apache2 security2 module not found, installing libapache2-mod-security2")
+				_ = exec.Command("apt-get", "update", "-y").Run()
+				cmd := exec.Command("apt-get", "install", "-y", "libapache2-mod-security2")
+				cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					resp.Output = strings.TrimSpace(string(out))
+					resp.Error = fmt.Sprintf("failed to install libapache2-mod-security2: %v", err)
+					return resp
+				}
+			}
+			if out, err := exec.Command("a2enmod", "security2").CombinedOutput(); err != nil {
+				resp.Output = strings.TrimSpace(string(out))
+				resp.Error = fmt.Sprintf("failed to enable apache2 security2 module: %v", err)
+				return resp
+			}
+			if !checkApacheModSecurity() {
+				resp.Error = "libapache2-mod-security2 installed, but apache2 security2 module is still not active"
+				return resp
+			}
+		}
+		apacheConf := fmt.Sprintf("# Managed by Stako\n<IfModule security2_module>\n    SecRuleEngine %s\n    SecAction \"id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level=%d\"\n</IfModule>\n", secRuleEngine, paranoia)
+		if err := os.WriteFile(apacheAvail, []byte(apacheConf), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		_ = exec.Command("a2enconf", "stako-waf").Run()
+		testResp := runExec(resp, false, logger, "apache2ctl", "-t")
+		if !testResp.OK {
+			_ = os.Remove(apacheEnabled)
+			_ = os.Remove(apacheAvail)
+			return testResp
+		}
+		if r := runExec(resp, false, logger, "systemctl", "reload", "apache2"); !r.OK {
+			return r
+		}
+		applied = append(applied, "apache2")
 	}
-	testResp := runExec(resp, false, logger, "nginx", "-t")
-	if !testResp.OK {
-		_ = os.Remove(nginxWAFConf)
-		return testResp
+
+	resp.OK = true
+	if len(applied) == 0 {
+		resp.Output = "WAF configuration saved to /etc/stako/waf.conf (no nginx or apache2 installed)"
+	} else {
+		resp.Output = fmt.Sprintf("WAF applied (%s, mode=%s, paranoia=%d) for: %s", engine, mode, paranoia, strings.Join(applied, ", "))
 	}
-	return runExec(resp, false, logger, "systemctl", "reload", "nginx")
+	return resp
 }
 
 func checkNginxModSecurity() bool {
@@ -1219,6 +1294,16 @@ func checkNginxModSecurity() bool {
 	}
 	if out, err := exec.Command("nginx", "-V").CombinedOutput(); err == nil {
 		return strings.Contains(strings.ToLower(string(out)), "modsecurity")
+	}
+	return false
+}
+
+func checkApacheModSecurity() bool {
+	if _, err := os.Stat("/etc/apache2/mods-enabled/security2.load"); err == nil {
+		return true
+	}
+	if out, err := exec.Command("apache2ctl", "-M").CombinedOutput(); err == nil {
+		return strings.Contains(strings.ToLower(string(out)), "security2_module")
 	}
 	return false
 }
