@@ -18,6 +18,7 @@ const (
 	CmdUserSetPassword = "user.set_password"
 	CmdDomainApply     = "domain.apply"
 	CmdDomainDelete    = "domain.delete"
+	CmdDomainLogs      = "domain.logs"
 	CmdSSLIssue        = "ssl.issue"
 	CmdAppDeploy       = "app.deploy"
 	CmdAppAction       = "app.action"

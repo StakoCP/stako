@@ -71,6 +71,36 @@
   let deleteTarget = $state<Domain | null>(null);
   let deleting = $state(false);
 
+  // Domain logs modal
+  let logsModalDomain = $state<Domain | null>(null);
+  let logsType = $state<'access' | 'error'>('access');
+  let logsPath = $state('');
+  let logsText = $state('');
+  let logsLoading = $state(false);
+
+  async function loadDomainLogs(d: Domain, type: 'access' | 'error') {
+    logsType = type;
+    logsLoading = true;
+    logsText = '';
+    try {
+      const res = await api.get<{ path: string; logs: string }>(
+        `/domains/${d.id}/logs?type=${type}&lines=200`
+      );
+      logsPath = res.path || '';
+      logsText = res.logs || '';
+    } catch (err) {
+      logsText = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      logsLoading = false;
+    }
+  }
+
+  function openDomainLogs(d: Domain) {
+    logsModalDomain = d;
+    logsPath = '';
+    loadDomainLogs(d, 'access');
+  }
+
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
       toast.success(`${message} (${fmt(i18n.t.domains.jobToast, { jobId })})`, {
@@ -445,6 +475,15 @@
                 >
                   <ActionIcon name="proxy" />
                 </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.domains.logs}
+                  aria-label={i18n.t.domains.logs}
+                  onclick={() => openDomainLogs(d)}
+                >
+                  <ActionIcon name="logs" />
+                </button>
                 {#if canWrite}
                   <button
                     type="button"
@@ -737,6 +776,57 @@
 
   {#snippet footer()}
     <button type="button" class="btn" onclick={() => (proxyModalDomain = null)}>
+      {i18n.t.common.close}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={logsModalDomain !== null}
+  title={logsModalDomain ? `${i18n.t.domains.logs}: ${logsModalDomain.domain}` : ''}
+  size="lg"
+  onclose={() => (logsModalDomain = null)}
+>
+  {#if logsModalDomain}
+    <div class="toolbar">
+      <div class="tabs">
+        <button
+          type="button"
+          class="tab-btn"
+          class:active={logsType === 'access'}
+          onclick={() => logsModalDomain && loadDomainLogs(logsModalDomain, 'access')}
+        >
+          {i18n.t.domains.accessLog}
+        </button>
+        <button
+          type="button"
+          class="tab-btn"
+          class:active={logsType === 'error'}
+          onclick={() => logsModalDomain && loadDomainLogs(logsModalDomain, 'error')}
+        >
+          {i18n.t.domains.errorLog}
+        </button>
+      </div>
+      <button
+        type="button"
+        class="btn btn-sm"
+        disabled={logsLoading}
+        onclick={() => logsModalDomain && loadDomainLogs(logsModalDomain, logsType)}
+      >
+        {i18n.t.common.refresh}
+      </button>
+    </div>
+    {#if logsPath}
+      <p class="form-hint mono">{logsPath}</p>
+    {/if}
+    {#if logsLoading}
+      <p>{i18n.t.common.loading}</p>
+    {:else}
+      <pre class="log-box">{logsText || i18n.t.domains.logsEmpty}</pre>
+    {/if}
+  {/if}
+  {#snippet footer()}
+    <button type="button" class="btn btn-primary" onclick={() => (logsModalDomain = null)}>
       {i18n.t.common.close}
     </button>
   {/snippet}

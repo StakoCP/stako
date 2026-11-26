@@ -209,6 +209,13 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		t.Fatalf("create proxy rule = %d: %s", rec.Code, rec.Body.String())
 	}
 
+	// Read domain access & error logs
+	for _, lt := range []string{"access", "error"} {
+		if rec := doReq(t, h, "GET", "/api/v1/domains/"+domResp.Domain.ID+"/logs?type="+lt, nil, cookies, ""); rec.Code != 200 {
+			t.Fatalf("domain logs (%s) = %d: %s", lt, rec.Code, rec.Body.String())
+		}
+	}
+
 	// Set then clear ipv4_id with explicit null
 	rec = doReq(t, h, "GET", "/api/v1/ips", nil, cookies, "")
 	var ipsResp struct {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/StakoCP/stako/internal/agentproto"
@@ -587,6 +588,61 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, ac.User, "domain.delete", "domain", d.ID, "success", map[string]any{"domain": d.Domain})
 	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
+}
+
+func (s *Server) handleDomainLogs(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	d, err := s.store.GetDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, d.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	logType := r.URL.Query().Get("type")
+	if logType == "" {
+		logType = "access"
+	}
+	if logType != "access" && logType != "error" {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "type must be access or error", "")
+		return
+	}
+	lines := 200
+	if rawLines := r.URL.Query().Get("lines"); rawLines != "" {
+		if n, err := strconv.Atoi(rawLines); err == nil && n > 0 {
+			if n > 1000 {
+				n = 1000
+			}
+			lines = n
+		}
+	}
+	owner, err := s.store.GetUserByID(r.Context(), d.UserID)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	resp, err := s.agent.Call(r.Context(), agentproto.CmdDomainLogs, map[string]any{
+		"username": owner.Username,
+		"domain":   d.Domain,
+		"log_type": logType,
+		"lines":    lines,
+	})
+	if err != nil {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Agent error", err.Error())
+		return
+	}
+	if !resp.OK {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to read domain logs", resp.Error)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"domain": d.Domain,
+		"type":   logType,
+		"path":   resp.Data["path"],
+		"logs":   resp.Data["logs"],
+	})
 }
 
 func (s *Server) handleIssueSSL(w http.ResponseWriter, r *http.Request) {

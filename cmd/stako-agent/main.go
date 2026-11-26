@@ -237,6 +237,56 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		}
 		return runExec(resp, dryRun, logger, "systemctl", "reload", "nginx")
 
+	case agentproto.CmdDomainLogs:
+		username, _ := req.Args["username"].(string)
+		domain, _ := req.Args["domain"].(string)
+		logType, _ := req.Args["log_type"].(string)
+		if logType == "" {
+			logType = "access"
+		}
+		if logType != "access" && logType != "error" {
+			resp.Error = "invalid log_type"
+			return resp
+		}
+		if err := agentproto.ValidateLinuxUsername(username); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if err := agentproto.ValidateDomain(domain); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		lines := 200
+		if lf, ok := req.Args["lines"].(float64); ok && lf > 0 {
+			lines = int(lf)
+			if lines > 1000 {
+				lines = 1000
+			}
+		}
+		logPath := fmt.Sprintf("/home/%s/web/%s/logs/%s.log", username, domain, logType)
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{"path": logPath, "logs": fmt.Sprintf("[dry-run] tail -n %d %s", lines, logPath)}
+			return resp
+		}
+		if _, err := os.Stat(logPath); err != nil {
+			if os.IsNotExist(err) {
+				resp.OK = true
+				resp.Data = map[string]any{"path": logPath, "logs": ""}
+				return resp
+			}
+			resp.Error = err.Error()
+			return resp
+		}
+		out, err := exec.Command("tail", "-n", fmt.Sprintf("%d", lines), logPath).CombinedOutput()
+		if err != nil {
+			resp.Error = fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
+			return resp
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"path": logPath, "logs": string(out)}
+		return resp
+
 	case agentproto.CmdSSLIssue:
 		domain, _ := req.Args["domain"].(string)
 		if err := agentproto.ValidateDomain(domain); err != nil {
