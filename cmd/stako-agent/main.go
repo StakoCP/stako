@@ -191,15 +191,20 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		domain, _ := req.Args["domain"].(string)
 		username, _ := req.Args["username"].(string)
 		docroot, _ := req.Args["docroot"].(string)
+		stack, _ := req.Args["stack"].(string)
 		tmpl, _ := req.Args["template"].(string)
 		phpVer, _ := req.Args["php_version"].(string)
 		conf, _ := req.Args["nginx_conf"].(string)
+		apacheConf, _ := req.Args["apache_conf"].(string)
+		if stack == "" {
+			stack = "nginx"
+		}
 		if err := agentproto.ValidateDomain(domain); err != nil {
 			resp.Error = err.Error()
 			return resp
 		}
 		if dryRun {
-			return runExec(resp, dryRun, logger, "nginx", "-t", "# write /etc/nginx/sites-enabled/"+domain+".conf")
+			return runExec(resp, dryRun, logger, "nginx", "-t", "# apply stack="+stack+" for "+domain)
 		}
 		if docroot != "" {
 			_ = os.MkdirAll(docroot, 0o750)
@@ -219,17 +224,61 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			ensurePHPFpmPool(username, phpVer, logger)
 		}
 		_ = os.MkdirAll("/var/www/acme", 0o755)
-		confPath := "/etc/nginx/sites-enabled/" + domain + ".conf"
-		if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
-			resp.Error = err.Error()
-			return resp
+		nginxConfPath := "/etc/nginx/sites-enabled/" + domain + ".conf"
+		apacheAvailPath := "/etc/apache2/sites-available/" + domain + ".conf"
+		apacheEnabledPath := "/etc/apache2/sites-enabled/" + domain + ".conf"
+
+		// Clean up vhost for inactive stack when switching stacks
+		if stack == "apache" {
+			if _, err := os.Stat(nginxConfPath); err == nil {
+				_ = os.Remove(nginxConfPath)
+				_ = runExec(resp, false, logger, "systemctl", "reload", "nginx")
+			}
+		} else if stack == "nginx" {
+			if _, err := os.Stat(apacheEnabledPath); err == nil {
+				_ = exec.Command("a2dissite", domain+".conf").Run()
+				_ = os.Remove(apacheAvailPath)
+				_ = runExec(resp, false, logger, "systemctl", "reload", "apache2")
+			}
 		}
-		testResp := runExec(resp, false, logger, "nginx", "-t")
-		if !testResp.OK {
-			_ = os.Remove(confPath)
-			return testResp
+
+		if apacheConf != "" {
+			_ = exec.Command("a2enmod", "proxy", "proxy_http", "proxy_fcgi", "setenvif", "rewrite", "headers", "ssl").Run()
+			if stack == "nginx_apache" {
+				_ = os.WriteFile("/etc/apache2/conf-available/stako-backend.conf", []byte("Listen 127.0.0.1:8080\n"), 0o644)
+				_ = exec.Command("a2enconf", "stako-backend").Run()
+			}
+			if err := os.WriteFile(apacheAvailPath, []byte(apacheConf), 0o644); err != nil {
+				resp.Error = err.Error()
+				return resp
+			}
+			_ = exec.Command("a2ensite", domain+".conf").Run()
+			testResp := runExec(resp, false, logger, "apache2ctl", "-t")
+			if !testResp.OK {
+				_ = exec.Command("a2dissite", domain+".conf").Run()
+				_ = os.Remove(apacheAvailPath)
+				return testResp
+			}
+			if r := runExec(resp, false, logger, "systemctl", "reload", "apache2"); !r.OK {
+				return r
+			}
 		}
-		return runExec(resp, false, logger, "systemctl", "reload", "nginx")
+
+		if conf != "" {
+			if err := os.WriteFile(nginxConfPath, []byte(conf), 0o644); err != nil {
+				resp.Error = err.Error()
+				return resp
+			}
+			testResp := runExec(resp, false, logger, "nginx", "-t")
+			if !testResp.OK {
+				_ = os.Remove(nginxConfPath)
+				return testResp
+			}
+			return runExec(resp, false, logger, "systemctl", "reload", "nginx")
+		}
+		resp.OK = true
+		resp.Output = "applied " + stack + " vhost for " + domain
+		return resp
 
 	case agentproto.CmdDomainDelete:
 		domain, _ := req.Args["domain"].(string)
@@ -237,10 +286,21 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			resp.Error = err.Error()
 			return resp
 		}
-		if !dryRun {
-			_ = os.Remove("/etc/nginx/sites-enabled/" + domain + ".conf")
+		if dryRun {
+			return runExec(resp, true, logger, "systemctl", "reload", "nginx")
 		}
-		return runExec(resp, dryRun, logger, "systemctl", "reload", "nginx")
+		if _, err := os.Stat("/etc/nginx/sites-enabled/" + domain + ".conf"); err == nil {
+			_ = os.Remove("/etc/nginx/sites-enabled/" + domain + ".conf")
+			_ = runExec(resp, false, logger, "systemctl", "reload", "nginx")
+		}
+		if _, err := os.Stat("/etc/apache2/sites-available/" + domain + ".conf"); err == nil {
+			_ = exec.Command("a2dissite", domain+".conf").Run()
+			_ = os.Remove("/etc/apache2/sites-available/" + domain + ".conf")
+			_ = runExec(resp, false, logger, "systemctl", "reload", "apache2")
+		}
+		resp.OK = true
+		resp.Output = "removed vhost for " + domain
+		return resp
 
 	case agentproto.CmdDomainLogs:
 		username, _ := req.Args["username"].(string)

@@ -1,0 +1,77 @@
+# Managed by Stako. Do not edit manually.
+{{- if eq .Stack "nginx_apache" }}
+<VirtualHost 127.0.0.1:8080>
+    ServerName {{ .Domain }}
+    {{- if .Aliases }}
+    ServerAlias{{ range .Aliases }} {{ . }}{{ end }}
+    {{- end }}
+    {{- template "apache_body" . }}
+</VirtualHost>
+{{- else }}
+<VirtualHost {{ if .ListenIPv4 }}{{ .ListenIPv4 }}{{ else }}*{{ end }}:80>
+    ServerName {{ .Domain }}
+    {{- if .Aliases }}
+    ServerAlias{{ range .Aliases }} {{ . }}{{ end }}
+    {{- end }}
+
+    Alias /.well-known/acme-challenge/ /var/www/acme/.well-known/acme-challenge/
+    <Directory /var/www/acme>
+        Require all granted
+    </Directory>
+
+    {{- if and .SSLEnabled .ForceHTTPS }}
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+    {{- else }}
+    {{- template "apache_body" . }}
+    {{- end }}
+</VirtualHost>
+{{ if .SSLEnabled }}
+<VirtualHost {{ if .ListenIPv4 }}{{ .ListenIPv4 }}{{ else }}*{{ end }}:443>
+    ServerName {{ .Domain }}
+    {{- if .Aliases }}
+    ServerAlias{{ range .Aliases }} {{ . }}{{ end }}
+    {{- end }}
+
+    SSLEngine on
+    SSLCertificateFile {{ .SSLCertPath }}
+    SSLCertificateKeyFile {{ .SSLKeyPath }}
+    {{- if .HSTS }}
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    {{- end }}
+
+    {{- template "apache_body" . }}
+</VirtualHost>
+{{ end }}
+{{- end }}
+
+{{ define "apache_body" }}
+    DocumentRoot {{ .Docroot }}
+    DirectoryIndex index.php index.html
+
+    ErrorLog /home/{{ .Username }}/web/{{ .Domain }}/logs/apache-error.log
+    CustomLog /home/{{ .Username }}/web/{{ .Domain }}/logs/apache-access.log combined
+
+    <Directory {{ .Docroot }}>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    {{- range .ProxyRules }}
+    ProxyPreserveHost On
+    ProxyPass {{ .Path }} http://{{ .Upstream }}
+    ProxyPassReverse {{ .Path }} http://{{ .Upstream }}
+    {{- end }}
+
+    {{- if eq .Template "proxy" }}
+    ProxyPreserveHost On
+    ProxyPass / http://{{ .ProxyTarget }}/
+    ProxyPassReverse / http://{{ .ProxyTarget }}/
+    {{- else if and (ne .Template "spa") (ne .Template "static") .PHPVersion }}
+    <FilesMatch "\.php$">
+        SetHandler "proxy:unix:/run/php/php{{ .PHPVersion }}-fpm-{{ .Username }}.sock|fcgi://localhost/"
+    </FilesMatch>
+    {{- end }}
+{{ end }}

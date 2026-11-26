@@ -279,20 +279,29 @@ func (s *Server) enqueueDomainApply(r *http.Request, actorID string, d *store.Do
 			v6 = ip.IP
 		}
 	}
-	conf, _ := render.RenderNginxVhost(render.DomainVhostData{
+	vData := render.DomainVhostData{
 		Username: owner.Username, Domain: d.Domain, Aliases: d.Aliases,
 		Stack: d.Stack, Template: d.Template, Docroot: d.Docroot,
 		PHPVersion: d.PHPVersion, SSLEnabled: d.SSLEnabled,
 		ForceHTTPS: d.ForceHTTPS, HSTS: d.HSTS,
 		ListenIPv4: v4, ListenIPv6: v6, ProxyTarget: d.ProxyTarget, ProxyRules: ruleData,
-	})
+	}
+	var nginxConf, apacheConf string
+	if d.Stack == "nginx" || d.Stack == "nginx_apache" || d.Stack == "" {
+		nginxConf, _ = render.RenderNginxVhost(vData)
+	}
+	if d.Stack == "apache" || d.Stack == "nginx_apache" {
+		apacheConf, _ = render.RenderApacheVhost(vData)
+	}
 	if j, err := s.jobs.Enqueue(r.Context(), "domain.apply", actorID, map[string]any{
 		"domain":      d.Domain,
 		"username":    owner.Username,
 		"docroot":     d.Docroot,
+		"stack":       d.Stack,
 		"template":    d.Template,
 		"php_version": d.PHPVersion,
-		"nginx_conf":  conf,
+		"nginx_conf":  nginxConf,
+		"apache_conf": apacheConf,
 	}); err == nil {
 		return &j.ID
 	}

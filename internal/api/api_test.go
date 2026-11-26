@@ -221,6 +221,13 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		t.Fatalf("php-versions = %d: %s", rec.Code, rec.Body.String())
 	}
 
+	// Create domain with nginx_apache stack
+	if rec := doReq(t, h, "POST", "/api/v1/domains", map[string]any{
+		"domain": "hybrid.example.com", "stack": "nginx_apache", "template": "php",
+	}, cookies, csrf); rec.Code != 201 {
+		t.Fatalf("create nginx_apache domain = %d: %s", rec.Code, rec.Body.String())
+	}
+
 	// Read & update per-domain custom nginx config
 	if rec := doReq(t, h, "GET", "/api/v1/domains/"+domResp.Domain.ID+"/custom-nginx", nil, cookies, ""); rec.Code != 200 {
 		t.Fatalf("get custom-nginx = %d: %s", rec.Code, rec.Body.String())

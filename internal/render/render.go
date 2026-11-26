@@ -11,7 +11,11 @@ import (
 //go:embed vhost_nginx.tmpl
 var nginxVhostTmplRaw string
 
+//go:embed vhost_apache.tmpl
+var apacheVhostTmplRaw string
+
 var nginxVhostTmpl = template.Must(template.New("nginx_vhost").Parse(nginxVhostTmplRaw))
+var apacheVhostTmpl = template.Must(template.New("apache_vhost").Parse(apacheVhostTmplRaw))
 
 type ProxyRuleData struct {
 	Path      string
@@ -49,6 +53,20 @@ func RenderNginxVhost(d DomainVhostData) (string, error) {
 	}
 	var buf bytes.Buffer
 	if err := nginxVhostTmpl.Execute(&buf, d); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func RenderApacheVhost(d DomainVhostData) (string, error) {
+	if d.SSLCertPath == "" {
+		d.SSLCertPath = fmt.Sprintf("/etc/letsencrypt/live/%s/fullchain.pem", d.Domain)
+	}
+	if d.SSLKeyPath == "" {
+		d.SSLKeyPath = fmt.Sprintf("/etc/letsencrypt/live/%s/privkey.pem", d.Domain)
+	}
+	var buf bytes.Buffer
+	if err := apacheVhostTmpl.Execute(&buf, d); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
