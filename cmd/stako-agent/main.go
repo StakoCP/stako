@@ -436,7 +436,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		if logType == "" {
 			logType = "access"
 		}
-		if logType != "access" && logType != "error" {
+		if logType != "access" && logType != "error" && logType != "goaccess" {
 			resp.Error = "invalid log_type"
 			return resp
 		}
@@ -455,19 +455,47 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 				lines = 1000
 			}
 		}
-		logPath := fmt.Sprintf("/home/%s/web/%s/logs/%s.log", username, domain, logType)
+		fileType := logType
+		if logType == "goaccess" {
+			fileType = "access"
+		}
+		logPath := fmt.Sprintf("/home/%s/web/%s/logs/%s.log", username, domain, fileType)
 		if dryRun {
 			resp.OK = true
-			resp.Data = map[string]any{"path": logPath, "logs": fmt.Sprintf("[dry-run] tail -n %d %s", lines, logPath)}
+			if logType == "goaccess" {
+				resp.Data = map[string]any{"path": logPath, "logs": fmt.Sprintf("[dry-run] goaccess %s --log-format=COMBINED -o json", logPath)}
+			} else {
+				resp.Data = map[string]any{"path": logPath, "logs": fmt.Sprintf("[dry-run] tail -n %d %s", lines, logPath)}
+			}
 			return resp
 		}
-		if _, err := os.Stat(logPath); err != nil {
+		info, err := os.Stat(logPath)
+		if err != nil {
 			if os.IsNotExist(err) {
 				resp.OK = true
 				resp.Data = map[string]any{"path": logPath, "logs": ""}
 				return resp
 			}
 			resp.Error = err.Error()
+			return resp
+		}
+		if logType == "goaccess" {
+			if _, err := exec.LookPath("goaccess"); err != nil {
+				resp.Error = "goaccess is not installed; install it from System Services"
+				return resp
+			}
+			if info.Size() == 0 {
+				resp.OK = true
+				resp.Data = map[string]any{"path": logPath, "logs": ""}
+				return resp
+			}
+			out, err := exec.Command("goaccess", logPath, "--log-format=COMBINED", "-o", "json").CombinedOutput()
+			if err != nil {
+				resp.Error = fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
+				return resp
+			}
+			resp.OK = true
+			resp.Data = map[string]any{"path": logPath, "logs": string(out)}
 			return resp
 		}
 		out, err := exec.Command("tail", "-n", fmt.Sprintf("%d", lines), logPath).CombinedOutput()

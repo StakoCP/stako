@@ -621,8 +621,8 @@ func (s *Server) handleDomainLogs(w http.ResponseWriter, r *http.Request) {
 	if logType == "" {
 		logType = "access"
 	}
-	if logType != "access" && logType != "error" {
-		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "type must be access or error", "")
+	if logType != "access" && logType != "error" && logType != "goaccess" {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "type must be access, error, or goaccess", "")
 		return
 	}
 	lines := 200

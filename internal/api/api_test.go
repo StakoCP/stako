@@ -209,8 +209,8 @@ func TestPhase1DomainsAppsIPsAndImpersonation(t *testing.T) {
 		t.Fatalf("create proxy rule = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Read domain access & error logs
-	for _, lt := range []string{"access", "error"} {
+	// Read domain access, error, and goaccess logs
+	for _, lt := range []string{"access", "error", "goaccess"} {
 		if rec := doReq(t, h, "GET", "/api/v1/domains/"+domResp.Domain.ID+"/logs?type="+lt, nil, cookies, ""); rec.Code != 200 {
 			t.Fatalf("domain logs (%s) = %d: %s", lt, rec.Code, rec.Body.String())
 		}

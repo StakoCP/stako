@@ -74,12 +74,36 @@
 
   // Domain logs modal
   let logsModalDomain = $state<Domain | null>(null);
-  let logsType = $state<'access' | 'error'>('access');
+  let logsType = $state<'access' | 'error' | 'goaccess'>('access');
   let logsPath = $state('');
   let logsText = $state('');
   let logsLoading = $state(false);
 
-  async function loadDomainLogs(d: Domain, type: 'access' | 'error') {
+  interface GoAccessItem {
+    data: string;
+    hits: { count: number; percent?: number };
+  }
+  interface GoAccessReport {
+    general?: {
+      total_requests?: number;
+      unique_visitors?: number;
+      bandwidth?: number;
+      failed_requests?: number;
+    };
+    requests?: { data?: GoAccessItem[] };
+    status_codes?: { data?: GoAccessItem[] };
+  }
+
+  let goaccessReport = $derived.by((): GoAccessReport | null => {
+    if (logsType !== 'goaccess' || !logsText.trim().startsWith('{')) return null;
+    try {
+      return JSON.parse(logsText) as GoAccessReport;
+    } catch {
+      return null;
+    }
+  });
+
+  async function loadDomainLogs(d: Domain, type: 'access' | 'error' | 'goaccess') {
     logsType = type;
     logsLoading = true;
     logsText = '';
@@ -927,6 +951,14 @@
         >
           {i18n.t.domains.errorLog}
         </button>
+        <button
+          type="button"
+          class="tab-btn"
+          class:active={logsType === 'goaccess'}
+          onclick={() => logsModalDomain && loadDomainLogs(logsModalDomain, 'goaccess')}
+        >
+          {i18n.t.domains.goaccessLog}
+        </button>
       </div>
       <button
         type="button"
@@ -942,6 +974,43 @@
     {/if}
     {#if logsLoading}
       <p>{i18n.t.common.loading}</p>
+    {:else if goaccessReport}
+      <div class="grid-cards">
+        <div class="card">
+          <div class="stat-label">{i18n.t.domains.totalRequests}</div>
+          <div class="stat-value">{goaccessReport.general?.total_requests ?? 0}</div>
+        </div>
+        <div class="card">
+          <div class="stat-label">{i18n.t.domains.uniqueVisitors}</div>
+          <div class="stat-value">{goaccessReport.general?.unique_visitors ?? 0}</div>
+        </div>
+      </div>
+      {#if goaccessReport.requests?.data && goaccessReport.requests.data.length > 0}
+        <h4 class="section-title">{i18n.t.domains.topUrls}</h4>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>URL</th><th>Hits</th></tr></thead>
+            <tbody>
+              {#each goaccessReport.requests.data.slice(0, 10) as row (row.data)}
+                <tr><td class="mono">{row.data}</td><td>{row.hits?.count ?? 0}</td></tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+      {#if goaccessReport.status_codes?.data && goaccessReport.status_codes.data.length > 0}
+        <h4 class="section-title">{i18n.t.domains.statusCodes}</h4>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Status</th><th>Hits</th></tr></thead>
+            <tbody>
+              {#each goaccessReport.status_codes.data.slice(0, 10) as row (row.data)}
+                <tr><td class="mono">{row.data}</td><td>{row.hits?.count ?? 0}</td></tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     {:else}
       <pre class="log-box">{logsText || i18n.t.domains.logsEmpty}</pre>
     {/if}
