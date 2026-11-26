@@ -80,6 +80,16 @@ func main() {
 
 	logger.Info("stako-agent listening", "sock", *sockPath, "dry_run", *dryRun)
 
+	if !*dryRun {
+		if st, err := os.Stat("/etc/nginx/conf.d"); err == nil && st.IsDir() {
+			if ensureNginxCloudflareRealIP() {
+				if exec.Command("nginx", "-t").Run() == nil {
+					_ = exec.Command("systemctl", "reload", "nginx").Run()
+				}
+			}
+		}
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -2023,12 +2033,15 @@ const cloudflareRealIPApache = `# Managed by Stako: restore real visitor IP behi
 </IfModule>
 `
 
-func ensureNginxCloudflareRealIP() {
+func ensureNginxCloudflareRealIP() bool {
 	p := "/etc/nginx/conf.d/cloudflare-realip.conf"
 	if _, err := os.Stat(p); os.IsNotExist(err) {
 		_ = os.MkdirAll(filepath.Dir(p), 0o755)
-		_ = os.WriteFile(p, []byte(cloudflareRealIPNginx), 0o644)
+		if err := os.WriteFile(p, []byte(cloudflareRealIPNginx), 0o644); err == nil {
+			return true
+		}
 	}
+	return false
 }
 
 func ensureApacheCloudflareRealIP() {
