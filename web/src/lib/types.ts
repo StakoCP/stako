@@ -816,3 +816,49 @@ export interface DomainCacheConfig {
   cf_dev_mode: boolean;
   updated_at: string;
 }
+
+export interface SmartDisk {
+  device: string;
+  model: string;
+  size: string;
+  health_status: string;
+  temperature_c: number;
+  power_on_hours: number;
+}
+
+export interface InodeMount {
+  filesystem: string;
+  mount: string;
+  inodes_total: number;
+  inodes_used: number;
+  inodes_free: number;
+  inodes_pct: number;
+}
+
+export interface MemoryPressure {
+  mem_total_mb: number;
+  mem_used_mb: number;
+  mem_pct: number;
+  swap_total_mb: number;
+  swap_used_mb: number;
+  swap_pct: number;
+  psi_mem_avg10: number;
+  psi_io_avg10: number;
+}
+
+export interface HardwareHealthResponse {
+  disks: SmartDisk[];
+  inodes: InodeMount[];
+  pressure: MemoryPressure;
+}
+
+export interface UserDiskQuota {
+  user_id: string;
+  username: string;
+  project_id: number;
+  disk_limit_mb: number;
+  inode_limit: number;
+  disk_used_mb: number;
+  inode_used: number;
+  updated_at: string;
+}

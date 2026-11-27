@@ -1402,3 +1402,55 @@ func TestDomainCacheRedisAndCloudflare(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestHardwareHealthAndUserProjectQuotas(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Hardware health (SMART, inodes, memory/swap pressure)
+	rec = doReq(t, h, "GET", "/api/v1/monitoring/hardware", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"disks"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"inodes"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"pressure"`)) {
+		t.Fatalf("hardware health = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// List user quotas
+	rec = doReq(t, h, "GET", "/api/v1/monitoring/quotas", nil, cookies, "")
+	if rec.Code != 200 {
+		t.Fatalf("list quotas = %d: %s", rec.Code, rec.Body.String())
+	}
+	var qList struct {
+		Items []struct {
+			UserID string `json:"user_id"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &qList)
+	if len(qList.Items) == 0 {
+		t.Fatalf("expected at least 1 user quota item")
+	}
+	uid := qList.Items[0].UserID
+
+	// Set project quota
+	rec = doReq(t, h, "PUT", "/api/v1/monitoring/quotas/"+uid, map[string]any{
+		"disk_limit_mb": 10240,
+		"inode_limit":   250000,
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"disk_limit_mb":10240`)) {
+		t.Fatalf("set quota = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

@@ -261,6 +261,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Monitoring & Alerts (7.13)
 	mux.HandleFunc("GET /api/v1/monitoring/metrics", s.requireAuth(s.handleMonitoringMetrics))
+	mux.HandleFunc("GET /api/v1/monitoring/hardware", s.requireAuth(s.handleHardwareHealth))
+	mux.HandleFunc("GET /api/v1/monitoring/quotas", s.requireAuth(s.handleListUserQuotas))
+	mux.HandleFunc("PUT /api/v1/monitoring/quotas/{userId}", s.requireAuth(s.handleSetUserQuota))
 	mux.HandleFunc("GET /api/v1/monitoring/alerts", s.requireAuth(s.handleListAlerts))
 	mux.HandleFunc("POST /api/v1/monitoring/alerts", s.requireAuth(s.handleCreateAlert))
 	mux.HandleFunc("DELETE /api/v1/monitoring/alerts/{id}", s.requireAuth(s.handleDeleteAlert))

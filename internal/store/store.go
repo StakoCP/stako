@@ -187,6 +187,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateDomainCache(); err != nil {
 		return err
 	}
+	if err := s.migrateUserQuotas(); err != nil {
+		return err
+	}
 	return s.seedDefaultPackages()
 }
 

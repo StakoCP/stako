@@ -6,14 +6,25 @@
   import { formatDateTime } from '../lib/format';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
-  import type { AlertChannel, AlertRule, MonitoringMetrics, UptimeMonitor } from '../lib/types';
+  import type {
+    AlertChannel,
+    AlertRule,
+    HardwareHealthResponse,
+    MonitoringMetrics,
+    UptimeMonitor,
+    UserDiskQuota,
+  } from '../lib/types';
 
   let metrics = $state<MonitoringMetrics | null>(null);
   let alerts = $state<AlertRule[]>([]);
   let monitors = $state<UptimeMonitor[]>([]);
+  let hardware = $state<HardwareHealthResponse | null>(null);
+  let quotas = $state<UserDiskQuota[]>([]);
   let loadingMetrics = $state(true);
   let loadingAlerts = $state(true);
   let loadingMonitors = $state(true);
+  let loadingHardware = $state(true);
+  let loadingQuotas = $state(true);
   let checkingId = $state<string | null>(null);
 
   let localeCode = $derived(i18n.locale === 'id' ? 'id-ID' : 'en-US');
@@ -44,6 +55,13 @@
   // Delete Uptime Monitor modal
   let deleteMonitorTarget = $state<UptimeMonitor | null>(null);
   let deletingMonitor = $state(false);
+
+  // Edit User Quota modal
+  let editQuotaTarget = $state<UserDiskQuota | null>(null);
+  let qDiskLimitMb = $state(0);
+  let qInodeLimit = $state(0);
+  let quotaFormError = $state('');
+  let savingQuota = $state(false);
 
   function clampPct(val: number): number {
     return Math.max(0, Math.min(100, Math.round(val)));
@@ -84,10 +102,35 @@
     }
   }
 
+  async function loadHardware() {
+    loadingHardware = true;
+    try {
+      hardware = await api.get<HardwareHealthResponse>('/monitoring/hardware');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      loadingHardware = false;
+    }
+  }
+
+  async function loadQuotas() {
+    loadingQuotas = true;
+    try {
+      const res = await api.get<{ items?: UserDiskQuota[] } | UserDiskQuota[]>('/monitoring/quotas');
+      quotas = Array.isArray(res) ? res : (res.items ?? []);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      loadingQuotas = false;
+    }
+  }
+
   function refreshAll() {
     loadMetrics();
     loadAlerts();
     loadMonitors();
+    loadHardware();
+    loadQuotas();
   }
 
   onMount(() => {
@@ -215,6 +258,38 @@
     if (!m.total_checks) return '-';
     return `${((m.up_checks / m.total_checks) * 100).toFixed(1)}%`;
   }
+
+  function openEditQuota(q: UserDiskQuota) {
+    editQuotaTarget = q;
+    qDiskLimitMb = q.disk_limit_mb;
+    qInodeLimit = q.inode_limit;
+    quotaFormError = '';
+  }
+
+  async function submitEditQuota(e: SubmitEvent) {
+    e.preventDefault();
+    if (!editQuotaTarget) return;
+    quotaFormError = '';
+    savingQuota = true;
+    try {
+      await api.put(`/monitoring/quotas/${editQuotaTarget.user_id}`, {
+        disk_limit_mb: Number(qDiskLimitMb),
+        inode_limit: Number(qInodeLimit),
+      });
+      toast.success(i18n.t.monitoring.quotas.quotaSaved);
+      editQuotaTarget = null;
+      await loadQuotas();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const fieldMsg = err.errors.map((x) => `${x.field}: ${x.message}`).join('; ');
+        quotaFormError = fieldMsg || err.detail || err.title;
+      } else {
+        quotaFormError = i18n.t.common.errorGeneric;
+      }
+    } finally {
+      savingQuota = false;
+    }
+  }
 </script>
 
 <div class="page-header">
@@ -222,7 +297,12 @@
     <h1 class="page-title">{i18n.t.monitoring.title}</h1>
     <p class="page-subtitle">{i18n.t.monitoring.subtitle}</p>
   </div>
-  <button type="button" class="btn btn-sm" onclick={refreshAll} disabled={loadingMetrics || loadingAlerts || loadingMonitors}>
+  <button
+    type="button"
+    class="btn btn-sm"
+    onclick={refreshAll}
+    disabled={loadingMetrics || loadingAlerts || loadingMonitors || loadingHardware || loadingQuotas}
+  >
     {i18n.t.common.refresh}
   </button>
 </div>
@@ -317,6 +397,168 @@
     </table>
   </div>
 {/if}
+
+<hr class="section-divider" />
+
+<div class="card">
+  <h2 class="card-title">{i18n.t.monitoring.hardware.hardwareTitle}</h2>
+  {#if loadingHardware && !hardware}
+    <p>{i18n.t.common.loading}</p>
+  {:else if hardware}
+    {@const swap = clampPct(hardware.pressure.swap_pct)}
+    <div class="grid-cards">
+      <div class="card">
+        <div class="stat-label">{i18n.t.monitoring.hardware.swapUsage}</div>
+        <div class="stat-value">{hardware.pressure.swap_pct.toFixed(1)}%</div>
+        <div class="stat-sub">{hardware.pressure.swap_used_mb} / {hardware.pressure.swap_total_mb} MB</div>
+        <progress
+          class="score-progress"
+          class:score-high={swap < 60}
+          class:score-medium={swap >= 60 && swap < 85}
+          class:score-low={swap >= 85}
+          value={swap}
+          max="100"
+        ></progress>
+      </div>
+
+      <div class="card">
+        <div class="stat-label">{i18n.t.monitoring.hardware.psiMem}</div>
+        <div class="stat-value">{hardware.pressure.psi_mem_avg10.toFixed(2)}%</div>
+      </div>
+
+      <div class="card">
+        <div class="stat-label">{i18n.t.monitoring.hardware.psiIo}</div>
+        <div class="stat-value">{hardware.pressure.psi_io_avg10.toFixed(2)}%</div>
+      </div>
+    </div>
+
+    <hr class="section-divider" />
+
+    <h3 class="section-heading">{i18n.t.monitoring.hardware.smartTitle}</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>{i18n.t.monitoring.hardware.device}</th>
+            <th>{i18n.t.monitoring.hardware.model}</th>
+            <th>{i18n.t.monitoring.hardware.size}</th>
+            <th>{i18n.t.monitoring.hardware.health}</th>
+            <th>{i18n.t.monitoring.hardware.temp}</th>
+            <th>{i18n.t.monitoring.hardware.powerOnHours}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#if hardware.disks.length === 0}
+            <tr>
+              <td colspan="6" class="empty-state">{i18n.t.monitoring.hardware.noDisks}</td>
+            </tr>
+          {:else}
+            {#each hardware.disks as d (d.device)}
+              <tr>
+                <td class="mono">{d.device}</td>
+                <td>{d.model}</td>
+                <td>{d.size}</td>
+                <td>
+                  <span
+                    class="badge"
+                    class:badge-success={d.health_status === 'PASSED'}
+                    class:badge-danger={d.health_status !== 'PASSED'}
+                  >
+                    {d.health_status}
+                  </span>
+                </td>
+                <td>{d.temperature_c} °C</td>
+                <td>{d.power_on_hours} h</td>
+              </tr>
+            {/each}
+          {/if}
+        </tbody>
+      </table>
+    </div>
+
+    <hr class="section-divider" />
+
+    <h3 class="section-heading">{i18n.t.monitoring.hardware.inodesTitle}</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>{i18n.t.monitoring.hardware.filesystem}</th>
+            <th>{i18n.t.monitoring.hardware.mount}</th>
+            <th>{i18n.t.monitoring.hardware.inodesUsedTotal}</th>
+            <th>%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#if hardware.inodes.length === 0}
+            <tr>
+              <td colspan="4" class="empty-state">{i18n.t.monitoring.hardware.noInodes}</td>
+            </tr>
+          {:else}
+            {#each hardware.inodes as m (m.mount)}
+              <tr>
+                <td class="mono">{m.filesystem}</td>
+                <td class="mono">{m.mount}</td>
+                <td class="mono">{m.inodes_used} / {m.inodes_total}</td>
+                <td>{m.inodes_pct.toFixed(1)}%</td>
+              </tr>
+            {/each}
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  {/if}
+</div>
+
+<div class="card">
+  <h2 class="card-title">{i18n.t.monitoring.quotas.quotasTitle}</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{i18n.t.monitoring.quotas.username}</th>
+          <th>{i18n.t.monitoring.quotas.projectId}</th>
+          <th>{i18n.t.monitoring.quotas.diskQuota}</th>
+          <th>{i18n.t.monitoring.quotas.inodeQuota}</th>
+          <th>{i18n.t.common.actions}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#if loadingQuotas && quotas.length === 0}
+          <tr>
+            <td colspan="5" class="empty-state">{i18n.t.common.loading}</td>
+          </tr>
+        {:else if quotas.length === 0}
+          <tr>
+            <td colspan="5" class="empty-state">{i18n.t.monitoring.quotas.noQuotas}</td>
+          </tr>
+        {:else}
+          {#each quotas as q (q.user_id)}
+            <tr>
+              <td><strong>{q.username}</strong></td>
+              <td class="mono">{q.project_id}</td>
+              <td class="mono">{q.disk_used_mb} / {q.disk_limit_mb}</td>
+              <td class="mono">{q.inode_used} / {q.inode_limit}</td>
+              <td>
+                <div class="table-actions">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.common.edit}
+                    aria-label={i18n.t.common.edit}
+                    onclick={() => openEditQuota(q)}
+                  >
+                    <ActionIcon name="edit" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        {/if}
+      </tbody>
+    </table>
+  </div>
+</div>
 
 <hr class="section-divider" />
 
@@ -636,4 +878,54 @@
       {deletingMonitor ? i18n.t.common.loading : i18n.t.common.delete}
     </button>
   </div>
+</Modal>
+
+<Modal
+  open={editQuotaTarget !== null}
+  title={i18n.t.monitoring.quotas.editQuotaTitle}
+  onclose={() => (editQuotaTarget = null)}
+>
+  <form onsubmit={submitEditQuota}>
+    {#if quotaFormError}
+      <div class="alert alert-danger" role="alert">{quotaFormError}</div>
+    {/if}
+    {#if editQuotaTarget}
+      <p class="form-hint">
+        <strong>{editQuotaTarget.username}</strong> (#{editQuotaTarget.project_id})
+      </p>
+    {/if}
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="quota-disk-limit">{i18n.t.monitoring.quotas.diskLimitMb}</label>
+        <input
+          id="quota-disk-limit"
+          class="form-control"
+          type="number"
+          min="0"
+          bind:value={qDiskLimitMb}
+          required
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="quota-inode-limit">{i18n.t.monitoring.quotas.inodeLimit}</label>
+        <input
+          id="quota-inode-limit"
+          class="form-control"
+          type="number"
+          min="0"
+          bind:value={qInodeLimit}
+          required
+        />
+      </div>
+    </div>
+    <p class="form-hint">{i18n.t.monitoring.quotas.quotaHint}</p>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick={() => (editQuotaTarget = null)}>
+        {i18n.t.common.cancel}
+      </button>
+      <button type="submit" class="btn btn-primary" disabled={savingQuota}>
+        {savingQuota ? i18n.t.common.loading : i18n.t.common.save}
+      </button>
+    </div>
+  </form>
 </Modal>

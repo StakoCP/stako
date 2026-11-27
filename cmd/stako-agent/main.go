@@ -1623,6 +1623,15 @@ logfile /var/log/redis/redis-server-%s.log
 	case agentproto.CmdRedisObjectCacheApply:
 		return applyRedisObjectCache(resp, dryRun, logger, req.Args)
 
+	case agentproto.CmdHardwareHealth:
+		return collectHardwareHealth(resp, dryRun)
+
+	case agentproto.CmdUserQuotaSet:
+		return applyUserProjectQuota(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdUserQuotaReport:
+		return reportUserProjectQuotas(resp, dryRun, req.Args)
+
 	case agentproto.CmdPanelImport:
 		return runPanelImport(resp, dryRun, logger, req.Args)
 
@@ -3884,5 +3893,257 @@ func applyRedisObjectCache(resp agentproto.Response, dryRun bool, logger *slog.L
 	logger.Info("applied redis object cache", "domain", domain, "port", port)
 	resp.OK = true
 	resp.Output = fmt.Sprintf("Redis object cache enabled on 127.0.0.1:%d", port)
+	return resp
+}
+
+func collectHardwareHealth(resp agentproto.Response, dryRun bool) agentproto.Response {
+	if dryRun {
+		resp.OK = true
+		resp.Data = map[string]any{
+			"disks": []map[string]any{
+				{"device": "/dev/sda", "model": "QEMU HARDDISK", "size": "80G", "health_status": "PASSED", "temperature_c": 34, "power_on_hours": 1420},
+			},
+			"inodes": []map[string]any{
+				{"filesystem": "/dev/sda1", "mount": "/", "inodes_total": 5242880, "inodes_used": 215400, "inodes_free": 5027480, "inodes_pct": 4.1},
+			},
+			"pressure": map[string]any{
+				"mem_total_mb": 4096, "mem_used_mb": 1640, "mem_pct": 40.0,
+				"swap_total_mb": 2048, "swap_used_mb": 128, "swap_pct": 6.2,
+				"psi_mem_avg10": 0.12, "psi_io_avg10": 0.05,
+			},
+		}
+		return resp
+	}
+
+	// 1. SMART disk health
+	disks := []map[string]any{}
+	if out, err := exec.Command("lsblk", "-dn", "-o", "NAME,TYPE,SIZE,MODEL").Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 3 || fields[1] != "disk" {
+				continue
+			}
+			dev := "/dev/" + fields[0]
+			size := fields[2]
+			model := strings.Join(fields[3:], " ")
+			health := "UNKNOWN"
+			temp := 0
+			poh := 0
+			if sout, err := exec.Command("smartctl", "-H", "-A", "-j", dev).Output(); err == nil {
+				var sj struct {
+					SmartStatus struct {
+						Passed bool `json:"passed"`
+					} `json:"smart_status"`
+					Temperature struct {
+						Current int `json:"current"`
+					} `json:"temperature"`
+					PowerOnTime struct {
+						Hours int `json:"hours"`
+					} `json:"power_on_time"`
+				}
+				if json.Unmarshal(sout, &sj) == nil {
+					if sj.SmartStatus.Passed {
+						health = "PASSED"
+					} else {
+						health = "FAILED"
+					}
+					temp = sj.Temperature.Current
+					poh = sj.PowerOnTime.Hours
+				}
+			}
+			disks = append(disks, map[string]any{
+				"device":         dev,
+				"model":          model,
+				"size":           size,
+				"health_status":  health,
+				"temperature_c":  temp,
+				"power_on_hours": poh,
+			})
+		}
+	}
+
+	// 2. Filesystem inode usage (df -i -P)
+	inodes := []map[string]any{}
+	if out, err := exec.Command("df", "-i", "-P").Output(); err == nil {
+		for i, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if i == 0 {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 6 {
+				continue
+			}
+			fs := fields[0]
+			if fs == "tmpfs" || fs == "devtmpfs" || strings.HasPrefix(fs, "udev") || strings.Contains(fields[5], "/snap") {
+				continue
+			}
+			tot, _ := strconv.Atoi(fields[1])
+			used, _ := strconv.Atoi(fields[2])
+			free, _ := strconv.Atoi(fields[3])
+			pctStr := strings.TrimSuffix(fields[4], "%")
+			pct, _ := strconv.ParseFloat(pctStr, 64)
+			inodes = append(inodes, map[string]any{
+				"filesystem":   fs,
+				"mount":        fields[5],
+				"inodes_total": tot,
+				"inodes_used":  used,
+				"inodes_free":  free,
+				"inodes_pct":   pct,
+			})
+		}
+	}
+
+	// 3. Memory, Swap & PSI pressure
+	var memTotalKB, memAvailKB, swapTotalKB, swapFreeKB int64
+	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 2 {
+				continue
+			}
+			v, _ := strconv.ParseInt(f[1], 10, 64)
+			switch f[0] {
+			case "MemTotal:":
+				memTotalKB = v
+			case "MemAvailable:":
+				memAvailKB = v
+			case "SwapTotal:":
+				swapTotalKB = v
+			case "SwapFree:":
+				swapFreeKB = v
+			}
+		}
+	}
+	memTotalMB := memTotalKB / 1024
+	memUsedMB := (memTotalKB - memAvailKB) / 1024
+	memPct := 0.0
+	if memTotalKB > 0 {
+		memPct = float64(memTotalKB-memAvailKB) * 100.0 / float64(memTotalKB)
+	}
+	swapTotalMB := swapTotalKB / 1024
+	swapUsedMB := (swapTotalKB - swapFreeKB) / 1024
+	swapPct := 0.0
+	if swapTotalKB > 0 {
+		swapPct = float64(swapTotalKB-swapFreeKB) * 100.0 / float64(swapTotalKB)
+	}
+	parsePSI := func(p string) float64 {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return 0
+		}
+		for _, f := range strings.Fields(string(b)) {
+			if strings.HasPrefix(f, "avg10=") {
+				v, _ := strconv.ParseFloat(strings.TrimPrefix(f, "avg10="), 64)
+				return v
+			}
+		}
+		return 0
+	}
+
+	resp.OK = true
+	resp.Data = map[string]any{
+		"disks":  disks,
+		"inodes": inodes,
+		"pressure": map[string]any{
+			"mem_total_mb":  memTotalMB,
+			"mem_used_mb":   memUsedMB,
+			"mem_pct":       memPct,
+			"swap_total_mb": swapTotalMB,
+			"swap_used_mb":  swapUsedMB,
+			"swap_pct":      swapPct,
+			"psi_mem_avg10": parsePSI("/proc/pressure/memory"),
+			"psi_io_avg10":  parsePSI("/proc/pressure/io"),
+		},
+	}
+	return resp
+}
+
+func applyUserProjectQuota(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	username, _ := args["username"].(string)
+	if err := agentproto.ValidateLinuxUsername(username); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	projectID := 1000
+	if pf, ok := args["project_id"].(float64); ok && pf > 0 {
+		projectID = int(pf)
+	}
+	diskMB := 0
+	if df, ok := args["disk_limit_mb"].(float64); ok && df >= 0 {
+		diskMB = int(df)
+	}
+	inodeLimit := 0
+	if inf, ok := args["inode_limit"].(float64); ok && inf >= 0 {
+		inodeLimit = int(inf)
+	}
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] applied project quota for %s (proj=%d disk=%dMB inodes=%d)", username, projectID, diskMB, inodeLimit)
+		return resp
+	}
+
+	homeDir := "/home/" + username
+	_ = os.MkdirAll(homeDir, 0o750)
+	// Register project in /etc/projects and /etc/projid
+	projLine := fmt.Sprintf("%d:%s\n", projectID, homeDir)
+	projIDLine := fmt.Sprintf("%s:%d\n", username, projectID)
+	upsertLine := func(path, prefix, line string) {
+		b, _ := os.ReadFile(path)
+		var out []string
+		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if l != "" && !strings.HasPrefix(l, prefix) {
+				out = append(out, l)
+			}
+		}
+		out = append(out, strings.TrimSpace(line))
+		_ = os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o644)
+	}
+	upsertLine("/etc/projects", fmt.Sprintf("%d:", projectID), projLine)
+	upsertLine("/etc/projid", username+":", projIDLine)
+
+	if _, err := exec.LookPath("xfs_quota"); err == nil {
+		_ = exec.Command("xfs_quota", "-x", "-c", fmt.Sprintf("project -s %s", username), "/home").Run()
+		_ = exec.Command("xfs_quota", "-x", "-c", fmt.Sprintf("limit -p bsoft=%dm bhard=%dm isoft=%d ihard=%d %s", diskMB, diskMB, inodeLimit, inodeLimit, username), "/home").Run()
+	} else if _, err := exec.LookPath("setquota"); err == nil {
+		_ = exec.Command("chattr", "-R", "+P", "-p", strconv.Itoa(projectID), homeDir).Run()
+		blocks := diskMB * 1024
+		_ = exec.Command("setquota", "-P", strconv.Itoa(projectID), strconv.Itoa(blocks), strconv.Itoa(blocks), strconv.Itoa(inodeLimit), strconv.Itoa(inodeLimit), "/").Run()
+	}
+
+	logger.Info("applied user project quota", "username", username, "project_id", projectID, "disk_mb", diskMB, "inodes", inodeLimit)
+	resp.OK = true
+	resp.Output = fmt.Sprintf("Applied project quota for %s (%d MB, %d inodes)", username, diskMB, inodeLimit)
+	return resp
+}
+
+func reportUserProjectQuotas(resp agentproto.Response, dryRun bool, args map[string]any) agentproto.Response {
+	usage := map[string]map[string]int{}
+	if usersRaw, ok := args["usernames"].([]any); ok {
+		for _, u := range usersRaw {
+			uname, _ := u.(string)
+			if uname == "" {
+				continue
+			}
+			if dryRun {
+				usage[uname] = map[string]int{"disk_used_mb": 42, "inode_used": 1280}
+				continue
+			}
+			homeDir := "/home/" + uname
+			diskUsed := 0
+			inodeUsed := 0
+			if out, err := exec.Command("du", "-sm", homeDir).Output(); err == nil {
+				f := strings.Fields(string(out))
+				if len(f) > 0 {
+					diskUsed, _ = strconv.Atoi(f[0])
+				}
+			}
+			if out, err := exec.Command("sh", "-c", fmt.Sprintf("find %q 2>/dev/null | wc -l", homeDir)).Output(); err == nil {
+				inodeUsed, _ = strconv.Atoi(strings.TrimSpace(string(out)))
+			}
+			usage[uname] = map[string]int{"disk_used_mb": diskUsed, "inode_used": inodeUsed}
+		}
+	}
+	resp.OK = true
+	resp.Data = map[string]any{"usage": usage}
 	return resp
 }
