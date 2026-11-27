@@ -323,6 +323,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/system/services/{id}/install", s.requireAuth(s.handleInstallSysService))
 	mux.HandleFunc("DELETE /api/v1/system/services/{id}", s.requireAuth(s.handleUninstallSysService))
 
+	// Plugin / Extension System (MIT Community Modules, Hooks, Pages & App Manifests)
+	mux.HandleFunc("GET /api/v1/plugins", s.requireAuth(s.handleListPlugins))
+	mux.HandleFunc("GET /api/v1/plugins/pages", s.requireAuth(s.handleListPluginPages))
+	mux.HandleFunc("POST /api/v1/plugins", s.requireAuth(s.handleInstallPlugin))
+	mux.HandleFunc("POST /api/v1/plugins/{id}/toggle", s.requireAuth(s.handleTogglePlugin))
+	mux.HandleFunc("DELETE /api/v1/plugins/{id}", s.requireAuth(s.handleDeletePlugin))
+
 	// WordPress Toolkit
 	mux.HandleFunc("GET /api/v1/wordpress", s.requireAuth(s.handleListWPSites))
 	mux.HandleFunc("POST /api/v1/wordpress/scan", s.requireAuth(s.handleScanWPSites))

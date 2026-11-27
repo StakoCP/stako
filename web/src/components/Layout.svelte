@@ -1,12 +1,12 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
-  import { ApiError } from '../lib/api';
+  import { onMount, type Snippet } from 'svelte';
+  import { api, ApiError } from '../lib/api';
   import { auth } from '../lib/auth.svelte';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { router } from '../lib/router.svelte';
   import { themeStore } from '../lib/theme.svelte';
   import { toast } from '../lib/toast.svelte';
-  import type { SystemCapabilities, UserRole } from '../lib/types';
+  import type { PluginPageNav, SystemCapabilities, UserRole } from '../lib/types';
 
   interface Props {
     children: Snippet;
@@ -15,6 +15,17 @@
   let { children }: Props = $props();
   let mobileOpen = $state(false);
   let exitingImpersonation = $state(false);
+  let pluginPages = $state<PluginPageNav[]>([]);
+
+  onMount(async () => {
+    if (!auth.user) return;
+    try {
+      const res = await api.get<{ items: PluginPageNav[] }>('/plugins/pages');
+      pluginPages = res.items ?? [];
+    } catch {
+      pluginPages = [];
+    }
+  });
 
   interface NavItem {
     path: string;
@@ -242,6 +253,12 @@
           roles: ['admin'],
         },
         {
+          path: '/plugins',
+          label: () => i18n.t.nav.plugins,
+          activeNames: ['plugins'],
+          roles: ['admin'],
+        },
+        {
           path: '/terminal',
           label: () => i18n.t.nav.terminal,
           activeNames: ['terminal'],
@@ -326,6 +343,21 @@
           {/each}
         </div>
       {/each}
+      {#if pluginPages.length > 0}
+        <div class="nav-group" role="group" aria-label={i18n.t.navGroups.extensions}>
+          <div class="nav-group-label">{i18n.t.navGroups.extensions}</div>
+          {#each pluginPages as pg (`${pg.plugin_id}:${pg.slug}`)}
+            <a
+              href={`#/plugins/${pg.slug}`}
+              class="nav-link"
+              class:active={router.current.name === 'plugin-page' && router.current.params.slug === pg.slug}
+              onclick={closeMobile}
+            >
+              <span>{pg.title}</span>
+            </a>
+          {/each}
+        </div>
+      {/if}
     </nav>
   </aside>
 

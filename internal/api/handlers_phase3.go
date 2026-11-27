@@ -398,7 +398,8 @@ func (s *Server) handleDeleteComposeStack(w http.ResponseWriter, r *http.Request
 // --- App Installer Catalog (7.11) ---
 
 func (s *Server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
-	WriteJSON(w, http.StatusOK, map[string]any{"items": catalog.Apps})
+	s.syncPluginCatalog(r.Context())
+	WriteJSON(w, http.StatusOK, map[string]any{"items": catalog.ListAll()})
 }
 
 func (s *Server) handleListAppInstalls(w http.ResponseWriter, r *http.Request) {
@@ -465,7 +466,15 @@ func (s *Server) handleInstallCatalogApp(w http.ResponseWriter, r *http.Request)
 	}
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "catalog.install", ac.User.ID, map[string]any{
-		"app_slug": appDef.Slug, "domain": dom.Domain, "username": username, "docroot": dom.Docroot,
+		"app_slug":     appDef.Slug,
+		"app_type":     appDef.Type,
+		"image":        appDef.Image,
+		"repo_url":     appDef.RepoURL,
+		"cmd_args":     appDef.CmdArgs,
+		"default_port": appDef.DefaultPort,
+		"domain":       dom.Domain,
+		"username":     username,
+		"docroot":      dom.Docroot,
 	}); err == nil {
 		jobID = &j.ID
 	}

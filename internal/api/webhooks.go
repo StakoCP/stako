@@ -42,14 +42,25 @@ func (s *Server) dispatchWebhookEvent(event string, payload map[string]any) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		hooks, err := s.store.ListWebhooks(ctx, nil)
-		if err != nil || len(hooks) == 0 {
-			return
-		}
-		for _, wh := range hooks {
-			if !slices.Contains(wh.Events, event) && !slices.Contains(wh.Events, "*") {
-				continue
+		if err == nil {
+			for _, wh := range hooks {
+				if !slices.Contains(wh.Events, event) && !slices.Contains(wh.Events, "*") {
+					continue
+				}
+				s.deliverWebhook(wh, event, payload)
 			}
-			s.deliverWebhook(wh, event, payload)
+		}
+		if plugins, err := s.store.ListPlugins(ctx); err == nil {
+			for _, p := range plugins {
+				if !p.Enabled {
+					continue
+				}
+				for _, ph := range p.Hooks {
+					if ph.Event == event || ph.Event == "*" {
+						s.deliverWebhook(store.Webhook{ID: "plg-" + p.ID, URL: ph.URL}, event, payload)
+					}
+				}
+			}
 		}
 	}()
 }

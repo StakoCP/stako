@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package catalog
 
+import "sync"
+
 type AppManifest struct {
 	Slug        string   `json:"slug"`
 	Name        string   `json:"name"`
@@ -30,8 +32,35 @@ var Apps = []AppManifest{
 	{Slug: "9router", Name: "9Router", Type: "docker", Category: "AI Router", Version: "latest", Description: "AI API gateway dan router multi-provider untuk model LLM", Image: "decolua/9router:latest", DefaultPort: 20128},
 }
 
+var (
+	extMu   sync.RWMutex
+	extApps []AppManifest
+)
+
+func SetExternalApps(apps []AppManifest) {
+	extMu.Lock()
+	defer extMu.Unlock()
+	extApps = append([]AppManifest(nil), apps...)
+}
+
+func ListAll() []AppManifest {
+	extMu.RLock()
+	defer extMu.RUnlock()
+	out := make([]AppManifest, 0, len(Apps)+len(extApps))
+	out = append(out, Apps...)
+	out = append(out, extApps...)
+	return out
+}
+
 func Find(slug string) (AppManifest, bool) {
 	for _, a := range Apps {
+		if a.Slug == slug {
+			return a, true
+		}
+	}
+	extMu.RLock()
+	defer extMu.RUnlock()
+	for _, a := range extApps {
 		if a.Slug == slug {
 			return a, true
 		}

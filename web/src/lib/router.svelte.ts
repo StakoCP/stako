@@ -29,6 +29,8 @@ export type RouteName =
   | 'migrations'
   | 'configs'
   | 'system-services'
+  | 'plugins'
+  | 'plugin-page'
   | 'terminal'
   | 'jobs'
   | 'job-detail'
@@ -78,6 +80,11 @@ function parseHash(): RouteMatch {
   if (path === '/migrations') return { name: 'migrations', params: {}, path };
   if (path === '/configs') return { name: 'configs', params: {}, path };
   if (path === '/system-services') return { name: 'system-services', params: {}, path };
+  if (path === '/plugins') return { name: 'plugins', params: {}, path };
+  if (path.startsWith('/plugins/')) {
+    const slug = decodeURIComponent(path.slice('/plugins/'.length));
+    if (slug) return { name: 'plugin-page', params: { slug }, path };
+  }
   if (path === '/terminal') return { name: 'terminal', params: {}, path };
   if (path === '/jobs') return { name: 'jobs', params: {}, path };
   if (path.startsWith('/jobs/')) {

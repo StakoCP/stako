@@ -31,6 +31,8 @@
   import MonitoringView from '../views/MonitoringView.svelte';
   import NodesView from '../views/NodesView.svelte';
   import PackagesView from '../views/PackagesView.svelte';
+  import PluginPageView from '../views/PluginPageView.svelte';
+  import PluginsView from '../views/PluginsView.svelte';
   import SecurityView from '../views/SecurityView.svelte';
   import ServicesView from '../views/ServicesView.svelte';
   import StatusPageView from '../views/StatusPageView.svelte';
@@ -127,6 +129,10 @@
       <SystemConfigsView />
     {:else if router.current.name === 'system-services' && auth.user.role === 'admin'}
       <SystemServicesView />
+    {:else if router.current.name === 'plugins' && auth.user.role === 'admin'}
+      <PluginsView />
+    {:else if router.current.name === 'plugin-page'}
+      <PluginPageView slug={router.current.params.slug} />
     {:else if router.current.name === 'terminal' && auth.user.role !== 'readonly'}
       <TerminalView />
     {:else if router.current.name === 'jobs'}

@@ -1407,3 +1407,13 @@ progress.score-progress.score-low::-moz-progress-bar {
   color: var(--text-muted);
   text-transform: uppercase;
 }
+
+.plugin-frame {
+  width: 100%;
+  height: calc(100vh - 180px);
+  min-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  display: block;
+}

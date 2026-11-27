@@ -862,3 +862,39 @@ export interface UserDiskQuota {
   inode_used: number;
   updated_at: string;
 }
+
+export interface PluginHook {
+  event: string;
+  url: string;
+  secret?: string;
+}
+
+export interface PluginPage {
+  slug: string;
+  title: string;
+  url: string;
+  roles?: string[];
+}
+
+export interface PluginPageNav {
+  plugin_id: string;
+  plugin_name: string;
+  slug: string;
+  title: string;
+  url: string;
+}
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  homepage: string;
+  enabled: boolean;
+  hooks: PluginHook[];
+  pages: PluginPage[];
+  apps: CatalogApp[];
+  created_at: string;
+  updated_at: string;
+}

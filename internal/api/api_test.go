@@ -1454,3 +1454,71 @@ func TestHardwareHealthAndUserProjectQuotas(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestPluginExtensionSystem(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Install community plugin with hook, dashboard page, and catalog app manifest
+	rec = doReq(t, h, "POST", "/api/v1/plugins", map[string]any{
+		"id":          "community-plausible",
+		"name":        "Plausible Analytics",
+		"version":     "1.0.0",
+		"author":      "Stako Community",
+		"description": "Adds Plausible app manifest, dashboard page, and domain hook",
+		"hooks": []map[string]any{
+			{"event": "domain.created", "url": "https://hooks.example.com/stako"},
+		},
+		"pages": []map[string]any{
+			{"slug": "plausible-stats", "title": "Plausible Stats", "url": "https://plausible.example.com/share"},
+		},
+		"apps": []map[string]any{
+			{"slug": "plausible-ce", "name": "Plausible CE", "type": "docker", "category": "Analytics", "version": "2.1", "description": "Privacy-friendly analytics", "image": "ghcr.io/plausible/community-edition:v2.1", "default_port": 8000},
+		},
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("install plugin = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify catalog includes community app manifest
+	rec = doReq(t, h, "GET", "/api/v1/catalog", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("plausible-ce")) {
+		t.Fatalf("catalog missing plugin app = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify plugin dashboard pages endpoint
+	rec = doReq(t, h, "GET", "/api/v1/plugins/pages", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("plausible-stats")) {
+		t.Fatalf("plugin pages = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Disable plugin -> app & page should disappear
+	if rec := doReq(t, h, "POST", "/api/v1/plugins/community-plausible/toggle", map[string]any{"enabled": false}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("toggle plugin = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "GET", "/api/v1/catalog", nil, cookies, "")
+	if bytes.Contains(rec.Body.Bytes(), []byte("plausible-ce")) {
+		t.Fatalf("disabled plugin app should not appear in catalog")
+	}
+
+	// Delete plugin
+	if rec := doReq(t, h, "DELETE", "/api/v1/plugins/community-plausible", nil, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("delete plugin = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}
