@@ -309,6 +309,182 @@ func (s *Server) handleDeleteMailbox(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) syncMailAliases(ctx context.Context) {
+	if s.agent == nil {
+		return
+	}
+	all, err := s.store.ListAllMailAliases(ctx)
+	if err != nil {
+		return
+	}
+	entries := make([]map[string]any, 0, len(all))
+	for _, a := range all {
+		entries = append(entries, map[string]any{
+			"source":       a.Source,
+			"destination":  a.Destination,
+			"is_catch_all": a.IsCatchAll,
+		})
+	}
+	_, _ = s.agent.Call(ctx, agentproto.CmdMailAliasSync, map[string]any{"aliases": entries})
+}
+
+func (s *Server) handleListMailAliases(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	md, err := s.store.GetMailDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, md.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	items, err := s.store.ListMailAliases(r.Context(), md.ID)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleCreateMailAlias(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	md, err := s.store.GetMailDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, md.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		LocalPart   string `json:"local_part"`
+		Destination string `json:"destination"`
+		IsCatchAll  bool   `json:"is_catch_all"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	req.Destination = strings.TrimSpace(strings.ToLower(req.Destination))
+	if req.Destination == "" || !strings.Contains(req.Destination, "@") {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Valid destination email is required", "")
+		return
+	}
+	var source string
+	if req.IsCatchAll || strings.TrimSpace(req.LocalPart) == "*" {
+		req.IsCatchAll = true
+		source = "@" + md.Domain
+	} else {
+		lp := strings.TrimSpace(strings.ToLower(req.LocalPart))
+		if !localPartRe.MatchString(lp) {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid local_part", "")
+			return
+		}
+		source = lp + "@" + md.Domain
+	}
+	id, _ := crypto.RandomID("ma")
+	alias := &store.MailAlias{
+		ID: id, MailDomainID: md.ID, Source: source, Destination: req.Destination, IsCatchAll: req.IsCatchAll,
+	}
+	if err := s.store.CreateMailAlias(r.Context(), alias); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	s.syncMailAliases(r.Context())
+	s.audit(r, ac.User, "mail.alias_create", "mail_alias", alias.ID, "success", map[string]any{"source": alias.Source, "destination": alias.Destination})
+	WriteJSON(w, http.StatusCreated, alias)
+}
+
+func (s *Server) handleDeleteMailAlias(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	a, err := s.store.GetMailAlias(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	md, err := s.store.GetMailDomain(r.Context(), a.MailDomainID)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, md.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	if err := s.store.DeleteMailAlias(r.Context(), a.ID); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	s.syncMailAliases(r.Context())
+	s.audit(r, ac.User, "mail.alias_delete", "mail_alias", a.ID, "success", nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListMailQueue(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
+		return
+	}
+	if s.agent == nil {
+		WriteJSON(w, http.StatusOK, map[string]any{"items": []any{}})
+		return
+	}
+	res, err := s.agent.Call(r.Context(), agentproto.CmdMailQueueList, map[string]any{})
+	if err != nil {
+		WriteJSON(w, http.StatusOK, map[string]any{"items": []any{}, "error": err.Error()})
+		return
+	}
+	WriteJSON(w, http.StatusOK, res.Data)
+}
+
+func (s *Server) handleFlushMailQueue(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
+		return
+	}
+	if s.agent != nil {
+		if _, err := s.agent.Call(r.Context(), agentproto.CmdMailQueueAction, map[string]any{"action": "flush"}); err != nil {
+			WriteProblem(w, http.StatusBadGateway, "agent_error", "Mail queue flush failed", err.Error())
+			return
+		}
+	}
+	s.audit(r, ac.User, "mail.queue_flush", "mail_queue", "all", "success", nil)
+	WriteJSON(w, http.StatusOK, map[string]any{"status": "flushed"})
+}
+
+func (s *Server) handleDeleteMailQueueItem(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
+		return
+	}
+	qid := strings.TrimSpace(r.PathValue("id"))
+	if qid == "" {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Queue ID required", "")
+		return
+	}
+	if s.agent != nil {
+		if _, err := s.agent.Call(r.Context(), agentproto.CmdMailQueueAction, map[string]any{"action": "delete", "queue_id": qid}); err != nil {
+			WriteProblem(w, http.StatusBadGateway, "agent_error", "Mail queue delete failed", err.Error())
+			return
+		}
+	}
+	s.audit(r, ac.User, "mail.queue_delete", "mail_queue", qid, "success", nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type serverRelayConfig struct {
 	Enabled     bool   `json:"enabled"`
 	Provider    string `json:"provider"`

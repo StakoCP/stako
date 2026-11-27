@@ -470,6 +470,24 @@ export interface Mailbox {
   created_at: string;
 }
 
+export interface MailAlias {
+  id: string;
+  mail_domain_id: string;
+  source: string;
+  destination: string;
+  is_catch_all: boolean;
+  created_at: string;
+}
+
+export interface MailQueueItem {
+  queue_id: string;
+  queue_name: string;
+  arrival_time: number | string;
+  message_size: number;
+  sender: string;
+  recipients?: { address: string; delay_reason?: string }[];
+}
+
 export type BackupKind = 'user_data' | 'system_config';
 export type BackupTarget = 'local' | 's3' | 'sftp';
 export type BackupStatus = 'completed' | 'running' | 'failed';

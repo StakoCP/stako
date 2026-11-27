@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -162,6 +163,86 @@ func (s *Server) handleBackupDatabase(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
 }
 
+func (s *Server) handleRestoreDatabase(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	db, err := s.store.GetDatabase(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, db.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		BackupPath string `json:"backup_path"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	req.BackupPath = strings.TrimSpace(req.BackupPath)
+	if req.BackupPath == "" {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "backup_path is required", "")
+		return
+	}
+	var jobID *string
+	if j, err := s.jobs.Enqueue(r.Context(), "db.restore", ac.User.ID, map[string]any{
+		"engine": db.Engine, "name": db.Name, "backup_path": req.BackupPath,
+	}); err == nil {
+		jobID = &j.ID
+	}
+	s.audit(r, ac.User, "db.restore", "database", db.ID, "success", map[string]any{"backup_path": req.BackupPath})
+	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
+}
+
+func (s *Server) handleRotateDBPassword(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	db, err := s.store.GetDatabase(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, db.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if r.Body != nil {
+		_ = DecodeJSON(r, &req)
+	}
+	newPass := strings.TrimSpace(req.Password)
+	if newPass == "" {
+		gen, err := crypto.RandomID("pw")
+		if err != nil {
+			WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to generate password", "")
+			return
+		}
+		newPass = gen + "A1!"
+	} else if err := crypto.ValidatePasswordStrength(newPass); err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Weak password", err.Error())
+		return
+	}
+	var jobID *string
+	if j, err := s.jobs.Enqueue(r.Context(), "db.rotate_password", ac.User.ID, map[string]any{
+		"engine": db.Engine, "name": db.Name, "username": db.DBUser, "password": newPass,
+	}); err == nil {
+		jobID = &j.ID
+	}
+	s.audit(r, ac.User, "db.rotate_password", "database", db.ID, "success", map[string]any{"username": db.DBUser})
+	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID, "username": db.DBUser, "password": newPass})
+}
+
 // --- FTP / SFTP (7.7) ---
 
 func (s *Server) handleListFTP(w http.ResponseWriter, r *http.Request) {
@@ -276,19 +357,28 @@ func (s *Server) handleDeleteFTP(w http.ResponseWriter, r *http.Request) {
 
 // --- Firewall & Bans (7.10) ---
 
-func (s *Server) renderNftables(rules []store.FirewallRule) string {
+func (s *Server) renderNftables(ctx context.Context, rules []store.FirewallRule) string {
+	blockEgress25, _ := s.store.GetSetting(ctx, "firewall_block_egress_25")
 	var b strings.Builder
-	b.WriteString("table inet stako {\n  chain input {\n    type filter hook input priority 0; policy drop;\n    iif lo accept\n    ct state established,related accept\n")
+	b.WriteString("table inet stako {\n  chain input {\n    type filter hook input priority 0; policy drop;\n    iif lo accept\n    ct state established,related accept\n    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert, nd-redirect } accept\n    ip protocol icmp icmp type echo-request limit rate 10/second accept\n    ip6 nexthdr icmpv6 icmpv6 type echo-request limit rate 10/second accept\n")
 	for _, r := range rules {
 		act := "accept"
 		if r.Action == "deny" {
 			act = "drop"
 		}
-		if r.Protocol == "any" {
-			b.WriteString(fmt.Sprintf("    ip saddr %s %s\n", r.SourceCIDR, act))
-		} else {
-			b.WriteString(fmt.Sprintf("    %s dport %s ip saddr %s %s\n", r.Protocol, r.Port, r.SourceCIDR, act))
+		addrKey := "ip saddr"
+		if strings.Contains(r.SourceCIDR, ":") {
+			addrKey = "ip6 saddr"
 		}
+		if r.Protocol == "any" {
+			b.WriteString(fmt.Sprintf("    %s %s %s\n", addrKey, r.SourceCIDR, act))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s dport %s %s %s %s\n", r.Protocol, r.Port, addrKey, r.SourceCIDR, act))
+		}
+	}
+	b.WriteString("  }\n  chain output {\n    type filter hook output priority 0; policy accept;\n")
+	if blockEgress25 == "true" {
+		b.WriteString("    tcp dport 25 skuid != 0 skuid != postfix drop\n")
 	}
 	b.WriteString("  }\n}\n")
 	return b.String()
@@ -357,7 +447,7 @@ func (s *Server) handleCreateFirewallRule(w http.ResponseWriter, r *http.Request
 	}
 	rules, _ := s.store.ListFirewallRules(r.Context())
 	var jobID *string
-	if j, err := s.jobs.Enqueue(r.Context(), "firewall.apply", ac.User.ID, map[string]any{"ruleset": s.renderNftables(rules)}); err == nil {
+	if j, err := s.jobs.Enqueue(r.Context(), "firewall.apply", ac.User.ID, map[string]any{"ruleset": s.renderNftables(r.Context(), rules)}); err == nil {
 		jobID = &j.ID
 	}
 	s.audit(r, ac.User, "firewall.rule_create", "firewall", rule.ID, "success", map[string]any{"port": rule.Port, "action": rule.Action})
@@ -377,11 +467,48 @@ func (s *Server) handleDeleteFirewallRule(w http.ResponseWriter, r *http.Request
 	}
 	rules, _ := s.store.ListFirewallRules(r.Context())
 	var jobID *string
-	if j, err := s.jobs.Enqueue(r.Context(), "firewall.apply", ac.User.ID, map[string]any{"ruleset": s.renderNftables(rules)}); err == nil {
+	if j, err := s.jobs.Enqueue(r.Context(), "firewall.apply", ac.User.ID, map[string]any{"ruleset": s.renderNftables(r.Context(), rules)}); err == nil {
 		jobID = &j.ID
 	}
 	s.audit(r, ac.User, "firewall.rule_delete", "firewall", id, "success", nil)
 	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
+}
+
+func (s *Server) handleGetFirewallEgress25(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
+		return
+	}
+	v, _ := s.store.GetSetting(r.Context(), "firewall_block_egress_25")
+	WriteJSON(w, http.StatusOK, map[string]any{"block_egress_25": v == "true"})
+}
+
+func (s *Server) handleSetFirewallEgress25(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
+		return
+	}
+	var req struct {
+		BlockEgress25 bool `json:"block_egress_25"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	val := "false"
+	if req.BlockEgress25 {
+		val = "true"
+	}
+	_ = s.store.SetSetting(r.Context(), "firewall_block_egress_25", val)
+	rules, _ := s.store.ListFirewallRules(r.Context())
+	var jobID *string
+	if j, err := s.jobs.Enqueue(r.Context(), "firewall.apply", ac.User.ID, map[string]any{"ruleset": s.renderNftables(r.Context(), rules)}); err == nil {
+		jobID = &j.ID
+	}
+	s.audit(r, ac.User, "firewall.egress25_update", "firewall", "egress25", "success", map[string]any{"enabled": req.BlockEgress25})
+	WriteJSON(w, http.StatusOK, map[string]any{"block_egress_25": req.BlockEgress25, "job_id": jobID})
 }
 
 func (s *Server) handleListFirewallBans(w http.ResponseWriter, r *http.Request) {

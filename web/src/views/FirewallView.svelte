@@ -3,6 +3,7 @@
   import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
+  import { auth } from '../lib/auth.svelte';
   import { formatDateTime } from '../lib/format';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
@@ -35,6 +36,12 @@
 
   // Unban tracking
   let unbanningIp = $state<string | null>(null);
+
+  // Egress Port 25 block (admin only)
+  let isAdmin = $derived(auth.user?.role === 'admin');
+  let egress25 = $state(false);
+  let loadingEgress25 = $state(false);
+  let savingEgress25 = $state(false);
 
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
@@ -71,9 +78,39 @@
     }
   }
 
+  async function loadEgress25() {
+    if (!isAdmin) return;
+    loadingEgress25 = true;
+    try {
+      const res = await api.get<{ block_egress_25: boolean }>('/firewall/egress25');
+      egress25 = res.block_egress_25;
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      loadingEgress25 = false;
+    }
+  }
+
+  async function toggleEgress25() {
+    savingEgress25 = true;
+    try {
+      const res = await api.put<{ block_egress_25: boolean; job_id?: string | null }>(
+        '/firewall/egress25',
+        { block_egress_25: !egress25 },
+      );
+      egress25 = res.block_egress_25;
+      notifyJob(i18n.t.firewall.egress25_saved, res.job_id);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      savingEgress25 = false;
+    }
+  }
+
   onMount(() => {
     loadRules();
     loadBans();
+    loadEgress25();
   });
 
   function openCreate() {
@@ -156,6 +193,30 @@
     + {i18n.t.firewall.addRule}
   </button>
 </div>
+
+{#if isAdmin}
+  <div class="card">
+    <div class="card-header-row">
+      <div>
+        <h2 class="card-title">{i18n.t.firewall.egress25_title}</h2>
+        <p class="form-hint">{i18n.t.firewall.egress25_desc}</p>
+      </div>
+      <div class="table-actions">
+        <span class="badge {egress25 ? 'badge-success' : 'badge-warning'}">
+          {egress25 ? i18n.t.common.yes : i18n.t.common.no}
+        </span>
+        <button
+          type="button"
+          class="btn btn-sm {egress25 ? 'btn-danger' : 'btn-primary'}"
+          onclick={toggleEgress25}
+          disabled={loadingEgress25 || savingEgress25}
+        >
+          {savingEgress25 ? i18n.t.common.loading : i18n.t.firewall.egress25_enabled}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <div class="card">
   <div class="toolbar">

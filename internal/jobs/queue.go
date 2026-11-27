@@ -170,6 +170,10 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdWPStaging
 	case "pg.pitr_basebackup", "pg.pitr_restore":
 		cmd = agentproto.CmdPGPITRApply
+	case "db.restore":
+		cmd = agentproto.CmdDBRestore
+	case "db.rotate_password":
+		cmd = agentproto.CmdDBRotatePassword
 	case "panel.import":
 		cmd = agentproto.CmdPanelImport
 	case "migration.export":

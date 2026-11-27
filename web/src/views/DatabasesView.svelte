@@ -50,6 +50,19 @@
   let deleteTarget = $state<Database | null>(null);
   let deleting = $state(false);
 
+  // Restore modal
+  let restoreTarget = $state<Database | null>(null);
+  let restorePath = $state('');
+  let restoreError = $state('');
+  let restoring = $state(false);
+
+  // Rotate Password modal
+  let rotateTarget = $state<Database | null>(null);
+  let rotatePassword = $state('');
+  let rotateError = $state('');
+  let rotating = $state(false);
+  let rotatedResult = $state<{ username: string; password: string } | null>(null);
+
   // Advanced PostgreSQL (admin only)
   let pgAdvTab = $state<'pgbouncer' | 'replication' | 'pitr'>('pgbouncer');
   let pgAdvLoading = $state(false);
@@ -324,6 +337,76 @@
       deleting = false;
     }
   }
+
+  function openRestore(db: Database) {
+    restoreTarget = db;
+    restorePath = '';
+    restoreError = '';
+  }
+
+  async function submitRestore(e: SubmitEvent) {
+    e.preventDefault();
+    if (!restoreTarget) return;
+    restoreError = '';
+    restoring = true;
+    try {
+      const res = await api.post<{ job_id?: string }>(`/databases/${restoreTarget.id}/restore`, {
+        backup_path: restorePath.trim(),
+      });
+      notifyJob(i18n.t.databases.restore_started, res?.job_id);
+      restoreTarget = null;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const fieldMsg = err.errors.map((x) => `${x.field}: ${x.message}`).join('; ');
+        restoreError = fieldMsg || err.detail || err.title;
+      } else {
+        restoreError = i18n.t.common.errorGeneric;
+      }
+    } finally {
+      restoring = false;
+    }
+  }
+
+  function openRotatePassword(db: Database) {
+    rotateTarget = db;
+    rotatePassword = '';
+    rotateError = '';
+    rotatedResult = null;
+  }
+
+  async function submitRotatePassword(e: SubmitEvent) {
+    e.preventDefault();
+    if (!rotateTarget) return;
+    rotateError = '';
+    rotating = true;
+    try {
+      const body = rotatePassword.trim() ? { password: rotatePassword.trim() } : {};
+      const res = await api.post<{ job_id?: string; username: string; password: string }>(
+        `/databases/${rotateTarget.id}/rotate-password`,
+        body,
+      );
+      rotatedResult = { username: res.username, password: res.password };
+      notifyJob(i18n.t.databases.rotate_pw_success, res.job_id);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const fieldMsg = err.errors.map((x) => `${x.field}: ${x.message}`).join('; ');
+        rotateError = fieldMsg || err.detail || err.title;
+      } else {
+        rotateError = i18n.t.common.errorGeneric;
+      }
+    } finally {
+      rotating = false;
+    }
+  }
+
+  async function copyText(value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(i18n.t.common.copied);
+    } catch {
+      toast.error(i18n.t.common.errorGeneric);
+    }
+  }
 </script>
 
 <div class="page-header">
@@ -396,6 +479,24 @@
                     onclick={() => triggerBackup(db)}
                   >
                     <ActionIcon name="backup" />
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.databases.restore}
+                    aria-label={i18n.t.databases.restore}
+                    onclick={() => openRestore(db)}
+                  >
+                    <ActionIcon name="restore" />
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.databases.rotate_pw}
+                    aria-label={i18n.t.databases.rotate_pw}
+                    onclick={() => openRotatePassword(db)}
+                  >
+                    <ActionIcon name="key" />
                   </button>
                   <button
                     type="button"
@@ -882,5 +983,101 @@
     <button type="button" class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
       {deleting ? i18n.t.common.loading : i18n.t.common.delete}
     </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={restoreTarget !== null}
+  title={`${i18n.t.databases.restore}${restoreTarget ? ` — ${restoreTarget.name}` : ''}`}
+  onclose={() => (restoreTarget = null)}
+>
+  <form id="db-restore-form" onsubmit={submitRestore}>
+    {#if restoreError}
+      <div class="alert alert-danger" role="alert">{restoreError}</div>
+    {/if}
+
+    <div class="form-group">
+      <label class="form-label" for="db-restore-path">{i18n.t.databases.restore_path}</label>
+      <input
+        id="db-restore-path"
+        type="text"
+        class="form-control mono"
+        bind:value={restorePath}
+        required
+        placeholder="/var/backups/stako/mydb.dump"
+      />
+    </div>
+  </form>
+  {#snippet footer()}
+    <button type="button" class="btn" onclick={() => (restoreTarget = null)} disabled={restoring}>
+      {i18n.t.common.cancel}
+    </button>
+    <button type="submit" form="db-restore-form" class="btn btn-primary" disabled={restoring}>
+      {restoring ? i18n.t.common.loading : i18n.t.databases.restore_run}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={rotateTarget !== null}
+  title={`${i18n.t.databases.rotate_pw}${rotateTarget ? ` — ${rotateTarget.name}` : ''}`}
+  onclose={() => (rotateTarget = null)}
+>
+  {#if rotatedResult}
+    <p><strong>{i18n.t.databases.rotate_pw_result}</strong></p>
+    <dl class="kv-list">
+      <dt>{i18n.t.databases.dbUser}</dt>
+      <dd class="mono">{rotatedResult.username}</dd>
+      <dt>{i18n.t.databases.dbPassword}</dt>
+      <dd>
+        <span class="table-actions">
+          <span class="mono">{rotatedResult.password}</span>
+          <button
+            type="button"
+            class="btn btn-sm btn-icon"
+            title={i18n.t.common.copy}
+            aria-label={i18n.t.common.copy}
+            onclick={() => rotatedResult && copyText(rotatedResult.password)}
+          >
+            <ActionIcon name="copy" />
+          </button>
+        </span>
+      </dd>
+    </dl>
+  {:else}
+    <form id="db-rotate-form" onsubmit={submitRotatePassword}>
+      {#if rotateError}
+        <div class="alert alert-danger" role="alert">{rotateError}</div>
+      {/if}
+
+      {#if rotateTarget}
+        <p>{fmt(i18n.t.databases.rotate_pw_confirm, { name: rotateTarget.name })}</p>
+      {/if}
+
+      <div class="form-group">
+        <label class="form-label" for="db-rotate-pw">{i18n.t.databases.rotate_pw_new}</label>
+        <input
+          id="db-rotate-pw"
+          type="password"
+          class="form-control"
+          bind:value={rotatePassword}
+          autocomplete="new-password"
+        />
+      </div>
+    </form>
+  {/if}
+  {#snippet footer()}
+    {#if rotatedResult}
+      <button type="button" class="btn btn-primary" onclick={() => (rotateTarget = null)}>
+        {i18n.t.common.close}
+      </button>
+    {:else}
+      <button type="button" class="btn" onclick={() => (rotateTarget = null)} disabled={rotating}>
+        {i18n.t.common.cancel}
+      </button>
+      <button type="submit" form="db-rotate-form" class="btn btn-primary" disabled={rotating}>
+        {rotating ? i18n.t.common.loading : i18n.t.databases.rotate_pw}
+      </button>
+    {/if}
   {/snippet}
 </Modal>

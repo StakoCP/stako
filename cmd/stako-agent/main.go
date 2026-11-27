@@ -806,6 +806,73 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		}
 		return runExec(resp, dryRun, logger, "mariadb-dump", "--single-transaction", dbName)
 
+	case agentproto.CmdDBRestore:
+		engine, _ := req.Args["engine"].(string)
+		dbName, _ := req.Args["name"].(string)
+		backupPath, _ := req.Args["backup_path"].(string)
+		if err := agentproto.ValidateDBIdent(dbName); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		backupPath = filepath.Clean(strings.TrimSpace(backupPath))
+		if backupPath == "" || !strings.HasPrefix(backupPath, "/") {
+			resp.Error = "invalid backup_path"
+			return resp
+		}
+		if engine == "postgres" {
+			return runExec(resp, dryRun, logger, "sudo", "-u", "postgres", "pg_restore", "--clean", "--if-exists", "-d", dbName, backupPath)
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "mariadb", dbName)
+		}
+		f, err := os.Open(backupPath)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		defer f.Close()
+		cmd := exec.Command("mariadb", dbName)
+		cmd.Stdin = f
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			resp.Error = fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
+			return resp
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"output": strings.TrimSpace(string(out))}
+		return resp
+
+	case agentproto.CmdDBRotatePassword:
+		engine, _ := req.Args["engine"].(string)
+		dbName, _ := req.Args["name"].(string)
+		dbUser, _ := req.Args["username"].(string)
+		pass, _ := req.Args["password"].(string)
+		if err := agentproto.ValidateDBIdent(dbName); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if err := agentproto.ValidateDBIdent(dbUser); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if pass == "" {
+			resp.Error = "password is required"
+			return resp
+		}
+		escPass := strings.ReplaceAll(pass, "'", "''")
+		if engine == "postgres" {
+			if dryRun {
+				return runExec(resp, true, logger, "sudo", "-u", "postgres", "psql", "-c", "ALTER USER ...")
+			}
+			sql := fmt.Sprintf("ALTER USER \"%s\" WITH PASSWORD '%s';", dbUser, escPass)
+			return runExec(resp, false, logger, "sudo", "-u", "postgres", "psql", "-c", sql)
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "mariadb", "-e", "ALTER USER ...")
+		}
+		stmts := fmt.Sprintf("ALTER USER IF EXISTS '%s'@'localhost' IDENTIFIED BY '%s'; ALTER USER IF EXISTS '%s'@'127.0.0.1' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", dbUser, escPass, dbUser, escPass)
+		return runExec(resp, false, logger, "mariadb", "-e", stmts)
+
 	case agentproto.CmdFTPCreate:
 		username, _ := req.Args["username"].(string)
 		homeDir, _ := req.Args["home_dir"].(string)
@@ -1188,6 +1255,88 @@ logfile /var/log/redis/redis-server-%s.log
 			return runExec(resp, true, logger, "postmap", "/etc/postfix/sasl_passwd")
 		}
 		return applyPostfixRelays(resp, logger, req.Args)
+
+	case agentproto.CmdMailAliasSync:
+		if dryRun {
+			return runExec(resp, true, logger, "postmap", "/etc/postfix/virtual_aliases")
+		}
+		var lines []string
+		if raw, ok := req.Args["aliases"].([]any); ok {
+			for _, item := range raw {
+				m, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				src, _ := m["source"].(string)
+				dst, _ := m["destination"].(string)
+				if src != "" && dst != "" && !strings.ContainsAny(src+dst, "\r\n") {
+					lines = append(lines, src+" "+dst)
+				}
+			}
+		}
+		_ = os.MkdirAll("/etc/postfix", 0o755)
+		content := strings.Join(lines, "\n")
+		if content != "" {
+			content += "\n"
+		}
+		if err := os.WriteFile("/etc/postfix/virtual_aliases", []byte(content), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		_ = exec.Command("postconf", "-e", "virtual_alias_maps=hash:/etc/postfix/virtual_aliases").Run()
+		if r := runExec(resp, false, logger, "postmap", "/etc/postfix/virtual_aliases"); !r.OK {
+			return r
+		}
+		_ = exec.Command("systemctl", "reload", "postfix").Run()
+		return resp
+
+	case agentproto.CmdMailQueueList:
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{"items": []any{}}
+			return resp
+		}
+		out, err := exec.Command("postqueue", "-j").Output()
+		if err != nil {
+			resp.OK = true
+			resp.Data = map[string]any{"items": []any{}, "error": err.Error()}
+			return resp
+		}
+		var items []map[string]any
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var entry map[string]any
+			if json.Unmarshal([]byte(line), &entry) == nil {
+				items = append(items, entry)
+			}
+		}
+		if items == nil {
+			items = []map[string]any{}
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"items": items}
+		return resp
+
+	case agentproto.CmdMailQueueAction:
+		action, _ := req.Args["action"].(string)
+		qid, _ := req.Args["queue_id"].(string)
+		if action == "flush" {
+			return runExec(resp, dryRun, logger, "postqueue", "-f")
+		}
+		if action == "delete" && qid != "" {
+			for _, c := range qid {
+				if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+					resp.Error = "invalid queue_id"
+					return resp
+				}
+			}
+			return runExec(resp, dryRun, logger, "postsuper", "-d", qid)
+		}
+		resp.Error = "invalid mail queue action"
+		return resp
 
 	case agentproto.CmdBackupRun:
 		id, _ := req.Args["id"].(string)

@@ -1574,3 +1574,115 @@ func TestPluginExtensionSystem(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestFirewallIPv6Egress25DBRestoreRotateAndMailAliasesQueue(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// 1. Firewall Egress Port 25 toggle & IPv6 rule
+	rec = doReq(t, h, "GET", "/api/v1/firewall/egress25", nil, cookies, "")
+	if rec.Code != 200 {
+		t.Fatalf("get egress25 = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "PUT", "/api/v1/firewall/egress25", map[string]any{"block_egress_25": true}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"block_egress_25":true`)) {
+		t.Fatalf("set egress25 = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "POST", "/api/v1/firewall/rules", map[string]any{
+		"protocol": "tcp", "port": "443", "source_cidr": "2001:db8::/32", "action": "allow", "comment": "https-v6",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create ipv6 firewall rule = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 2. Database Restore & Rotate Password
+	rec = doReq(t, h, "POST", "/api/v1/databases", map[string]any{
+		"engine": "postgres", "name": "appdb_test", "db_password": "Strong-DB-Pass-123!",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create db = %d: %s", rec.Code, rec.Body.String())
+	}
+	var dbResp struct {
+		Database struct {
+			ID string `json:"id"`
+		} `json:"database"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &dbResp)
+	if dbResp.Database.ID == "" {
+		t.Fatalf("missing database id: %s", rec.Body.String())
+	}
+	rec = doReq(t, h, "POST", "/api/v1/databases/"+dbResp.Database.ID+"/restore", map[string]any{
+		"backup_path": "/var/backups/stako/appdb_test.dump",
+	}, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("restore db = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "POST", "/api/v1/databases/"+dbResp.Database.ID+"/rotate-password", map[string]any{}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"password"`)) {
+		t.Fatalf("rotate db password = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 3. Mail Aliases / Catch-All & Mail Queue
+	rec = doReq(t, h, "POST", "/api/v1/mail/domains", map[string]any{"domain": "aliastest.example"}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create mail domain = %d: %s", rec.Code, rec.Body.String())
+	}
+	var mdResp struct {
+		MailDomain struct {
+			ID string `json:"id"`
+		} `json:"mail_domain"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &mdResp)
+
+	rec = doReq(t, h, "POST", "/api/v1/mail/domains/"+mdResp.MailDomain.ID+"/aliases", map[string]any{
+		"local_part": "sales", "destination": "team@example.com",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create mail alias = %d: %s", rec.Code, rec.Body.String())
+	}
+	var aliasResp struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &aliasResp)
+
+	rec = doReq(t, h, "POST", "/api/v1/mail/domains/"+mdResp.MailDomain.ID+"/aliases", map[string]any{
+		"is_catch_all": true, "destination": "catchall@example.com",
+	}, cookies, csrf)
+	if rec.Code != 201 || !bytes.Contains(rec.Body.Bytes(), []byte(`"@aliastest.example"`)) {
+		t.Fatalf("create catch-all alias = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, "GET", "/api/v1/mail/domains/"+mdResp.MailDomain.ID+"/aliases", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("sales@aliastest.example")) {
+		t.Fatalf("list mail aliases = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "DELETE", "/api/v1/mail/aliases/"+aliasResp.ID, nil, cookies, csrf)
+	if rec.Code != 204 {
+		t.Fatalf("delete mail alias = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, "GET", "/api/v1/mail/queue", nil, cookies, "")
+	if rec.Code != 200 {
+		t.Fatalf("list mail queue = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "POST", "/api/v1/mail/queue/flush", nil, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("flush mail queue = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

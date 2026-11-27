@@ -27,6 +27,14 @@ func (s *Store) migratePhase4() error {
 		quota_mb INTEGER NOT NULL DEFAULT 1024,
 		created_at TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS mail_aliases (
+		id TEXT PRIMARY KEY,
+		mail_domain_id TEXT NOT NULL REFERENCES mail_domains(id) ON DELETE CASCADE,
+		source TEXT NOT NULL UNIQUE,
+		destination TEXT NOT NULL,
+		is_catch_all INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL
+	);
 	CREATE TABLE IF NOT EXISTS backups (
 		id TEXT PRIMARY KEY,
 		user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -225,6 +233,86 @@ func (s *Store) ListMailboxes(ctx context.Context, mailDomainID string) ([]Mailb
 
 func (s *Store) DeleteMailbox(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM mailboxes WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CreateMailAlias(ctx context.Context, a *MailAlias) error {
+	if a.CreatedAt.IsZero() {
+		a.CreatedAt = time.Now().UTC()
+	}
+	isCatchAll := 0
+	if a.IsCatchAll {
+		isCatchAll = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO mail_aliases (id, mail_domain_id, source, destination, is_catch_all, created_at) VALUES (?,?,?,?,?,?)`,
+		a.ID, a.MailDomainID, a.Source, a.Destination, isCatchAll, formatTime(a.CreatedAt),
+	)
+	if isUniqueErr(err) {
+		return ErrConflict
+	}
+	return err
+}
+
+func (s *Store) GetMailAlias(ctx context.Context, id string) (*MailAlias, error) {
+	var a MailAlias
+	var isCatchAll int
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT id, mail_domain_id, source, destination, is_catch_all, created_at FROM mail_aliases WHERE id=?`, id).
+		Scan(&a.ID, &a.MailDomainID, &a.Source, &a.Destination, &isCatchAll, &createdAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	a.IsCatchAll = isCatchAll != 0
+	a.CreatedAt = parseTime(createdAt)
+	return &a, nil
+}
+
+func (s *Store) ListMailAliases(ctx context.Context, mailDomainID string) ([]MailAlias, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, mail_domain_id, source, destination, is_catch_all, created_at FROM mail_aliases WHERE mail_domain_id=? ORDER BY source ASC`, mailDomainID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMailAliases(rows)
+}
+
+func (s *Store) ListAllMailAliases(ctx context.Context) ([]MailAlias, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, mail_domain_id, source, destination, is_catch_all, created_at FROM mail_aliases ORDER BY source ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMailAliases(rows)
+}
+
+func scanMailAliases(rows *sql.Rows) ([]MailAlias, error) {
+	out := []MailAlias{}
+	for rows.Next() {
+		var a MailAlias
+		var isCatchAll int
+		var createdAt string
+		if err := rows.Scan(&a.ID, &a.MailDomainID, &a.Source, &a.Destination, &isCatchAll, &createdAt); err != nil {
+			return nil, err
+		}
+		a.IsCatchAll = isCatchAll != 0
+		a.CreatedAt = parseTime(createdAt)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteMailAlias(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM mail_aliases WHERE id=?`, id)
 	if err != nil {
 		return err
 	}

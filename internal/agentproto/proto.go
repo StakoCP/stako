@@ -102,6 +102,11 @@ const (
 	CmdHardwareHealth        = "system.hardware_health"
 	CmdUserQuotaSet          = "quota.set_project"
 	CmdUserQuotaReport       = "quota.report"
+	CmdDBRestore             = "db.restore"
+	CmdDBRotatePassword      = "db.rotate_password"
+	CmdMailAliasSync         = "mail.alias_sync"
+	CmdMailQueueList         = "mail.queue_list"
+	CmdMailQueueAction       = "mail.queue_action"
 )
 
 type Request struct {

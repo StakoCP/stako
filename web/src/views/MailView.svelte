@@ -8,8 +8,10 @@
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
   import type {
+    MailAlias,
     MailDnsRecord,
     MailDomain,
+    MailQueueItem,
     Mailbox,
     PaginatedResponse,
     ServerSMTPRelay,
@@ -30,13 +32,35 @@
   let loadingDomains = $state(true);
 
   let canWrite = $derived(auth.user?.role !== 'readonly');
+  let isAdmin = $derived(auth.user?.role === 'admin');
   let canSelectOwner = $derived(auth.user?.role === 'admin' || auth.user?.role === 'reseller');
   let localeCode = $derived(i18n.locale === 'id' ? 'id-ID' : 'en-US');
 
-  // Selected domain -> Mailboxes panel
+  // Selected domain -> Mailboxes & Aliases panel
   let selectedDomain = $state<MailDomain | null>(null);
+  let domainTab = $state<'mailboxes' | 'aliases'>('mailboxes');
   let mailboxes = $state<Mailbox[]>([]);
   let loadingMailboxes = $state(false);
+  let aliases = $state<MailAlias[]>([]);
+  let loadingAliases = $state(false);
+
+  // Add Alias modal
+  let addAliasOpen = $state(false);
+  let fAliasLocalPart = $state('');
+  let fAliasDestination = $state('');
+  let fAliasCatchAll = $state(false);
+  let aliasFormError = $state('');
+  let savingAlias = $state(false);
+
+  // Delete Alias modal
+  let deleteAliasTarget = $state<MailAlias | null>(null);
+  let deletingAlias = $state(false);
+
+  // Mail Queue (admin only)
+  let queueItems = $state<MailQueueItem[]>([]);
+  let loadingQueue = $state(false);
+  let flushingQueue = $state(false);
+  let deletingQueueId = $state<string | null>(null);
 
   // Add Mail Domain modal
   let addDomainOpen = $state(false);
@@ -147,7 +171,7 @@
 
   async function selectDomain(domain: MailDomain) {
     selectedDomain = domain;
-    await loadMailboxes(domain.id);
+    await Promise.all([loadMailboxes(domain.id), loadAliases(domain.id)]);
   }
 
   async function loadMailboxes(domainId: string) {
@@ -162,9 +186,61 @@
     }
   }
 
+  async function loadAliases(domainId: string) {
+    loadingAliases = true;
+    try {
+      const res = await api.get<{ items: MailAlias[] }>(`/mail/domains/${domainId}/aliases`);
+      aliases = res.items ?? [];
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      loadingAliases = false;
+    }
+  }
+
+  async function loadQueue() {
+    if (!isAdmin) return;
+    loadingQueue = true;
+    try {
+      const res = await api.get<{ items: MailQueueItem[] }>('/mail/queue');
+      queueItems = res.items ?? [];
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      loadingQueue = false;
+    }
+  }
+
+  async function flushQueue() {
+    flushingQueue = true;
+    try {
+      await api.post('/mail/queue/flush');
+      toast.success(i18n.t.mail.queue_flushed);
+      await loadQueue();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      flushingQueue = false;
+    }
+  }
+
+  async function deleteQueueItem(queueId: string) {
+    deletingQueueId = queueId;
+    try {
+      await api.delete(`/mail/queue/${encodeURIComponent(queueId)}`);
+      toast.success(i18n.t.mail.queue_deleted);
+      await loadQueue();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      deletingQueueId = null;
+    }
+  }
+
   onMount(() => {
     loadDomains();
     loadUsers();
+    loadQueue();
   });
 
   function openAddDomain() {
@@ -277,6 +353,7 @@
       if (selectedDomain?.id === deleteDomainTarget.id) {
         selectedDomain = null;
         mailboxes = [];
+        aliases = [];
       }
       deleteDomainTarget = null;
       await loadDomains();
@@ -340,6 +417,51 @@
       deleteMailboxTarget = null;
     } finally {
       deletingMailbox = false;
+    }
+  }
+
+  function openAddAlias() {
+    fAliasLocalPart = '';
+    fAliasDestination = '';
+    fAliasCatchAll = false;
+    aliasFormError = '';
+    addAliasOpen = true;
+  }
+
+  async function submitAlias(e: SubmitEvent) {
+    e.preventDefault();
+    if (!selectedDomain) return;
+    aliasFormError = '';
+    savingAlias = true;
+    try {
+      await api.post<MailAlias>(`/mail/domains/${selectedDomain.id}/aliases`, {
+        local_part: fAliasCatchAll ? '*' : fAliasLocalPart.trim(),
+        destination: fAliasDestination.trim(),
+        is_catch_all: fAliasCatchAll,
+      });
+      toast.success(i18n.t.mail.alias_created);
+      addAliasOpen = false;
+      await loadAliases(selectedDomain.id);
+    } catch (err) {
+      aliasFormError = extractApiError(err);
+    } finally {
+      savingAlias = false;
+    }
+  }
+
+  async function confirmDeleteAlias() {
+    if (!deleteAliasTarget || !selectedDomain) return;
+    deletingAlias = true;
+    try {
+      await api.delete(`/mail/aliases/${deleteAliasTarget.id}`);
+      toast.success(i18n.t.mail.alias_deleted);
+      deleteAliasTarget = null;
+      await loadAliases(selectedDomain.id);
+    } catch (err) {
+      toast.error(extractApiError(err));
+      deleteAliasTarget = null;
+    } finally {
+      deletingAlias = false;
     }
   }
 
@@ -605,7 +727,7 @@
   <hr class="section-divider" />
   <div class="card">
     <div class="toolbar">
-      <h2 class="card-title">{fmt(i18n.t.mail.mailboxesFor, { domain: selectedDomain.domain })}</h2>
+      <h2 class="card-title">{selectedDomain.domain}</h2>
       <div class="table-actions">
         <button
           type="button"
@@ -616,19 +738,173 @@
           <ActionIcon name="key" />
           {i18n.t.mail.viewDnsBtn}
         </button>
-        <button
-          type="button"
-          class="btn btn-sm"
-          onclick={() => selectedDomain && loadMailboxes(selectedDomain.id)}
-          disabled={loadingMailboxes}
-        >
+        {#if domainTab === 'mailboxes'}
+          <button
+            type="button"
+            class="btn btn-sm"
+            onclick={() => selectedDomain && loadMailboxes(selectedDomain.id)}
+            disabled={loadingMailboxes}
+          >
+            {i18n.t.common.refresh}
+          </button>
+          {#if canWrite}
+            <button type="button" class="btn btn-sm btn-primary" onclick={openAddMailbox}>
+              + {i18n.t.mail.createMailbox}
+            </button>
+          {/if}
+        {:else}
+          <button
+            type="button"
+            class="btn btn-sm"
+            onclick={() => selectedDomain && loadAliases(selectedDomain.id)}
+            disabled={loadingAliases}
+          >
+            {i18n.t.common.refresh}
+          </button>
+          {#if canWrite}
+            <button type="button" class="btn btn-sm btn-primary" onclick={openAddAlias}>
+              + {i18n.t.mail.add_alias}
+            </button>
+          {/if}
+        {/if}
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label={selectedDomain.domain}>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={domainTab === 'mailboxes'}
+        class="tab-btn"
+        class:active={domainTab === 'mailboxes'}
+        onclick={() => (domainTab = 'mailboxes')}
+      >
+        {fmt(i18n.t.mail.mailboxesFor, { domain: selectedDomain.domain })}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={domainTab === 'aliases'}
+        class="tab-btn"
+        class:active={domainTab === 'aliases'}
+        onclick={() => (domainTab = 'aliases')}
+      >
+        {i18n.t.mail.aliases}
+      </button>
+    </div>
+
+    {#if domainTab === 'mailboxes'}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{i18n.t.mail.email}</th>
+              <th>{i18n.t.mail.quotaMb}</th>
+              <th>{i18n.t.common.createdAt}</th>
+              {#if canWrite}
+                <th>{i18n.t.common.actions}</th>
+              {/if}
+            </tr>
+          </thead>
+          <tbody>
+            {#if loadingMailboxes && mailboxes.length === 0}
+              <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.common.loading}</td></tr>
+            {:else if mailboxes.length === 0}
+              <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.common.noData}</td></tr>
+            {:else}
+              {#each mailboxes as mb (mb.id)}
+                <tr>
+                  <td class="mono"><strong>{mb.email}</strong></td>
+                  <td>{mb.quota_mb === 0 ? i18n.t.common.unlimited : formatQuota(mb.quota_mb, 'MB')}</td>
+                  <td>{formatDateTime(mb.created_at, localeCode)}</td>
+                  {#if canWrite}
+                    <td>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-icon btn-danger"
+                        title={i18n.t.common.delete}
+                        aria-label={i18n.t.common.delete}
+                        onclick={() => (deleteMailboxTarget = mb)}
+                      >
+                        <ActionIcon name="delete" />
+                      </button>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    {:else}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{i18n.t.mail.source}</th>
+              <th>{i18n.t.mail.destination}</th>
+              <th>{i18n.t.common.createdAt}</th>
+              {#if canWrite}
+                <th>{i18n.t.common.actions}</th>
+              {/if}
+            </tr>
+          </thead>
+          <tbody>
+            {#if loadingAliases && aliases.length === 0}
+              <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.common.loading}</td></tr>
+            {:else if aliases.length === 0}
+              <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.common.noData}</td></tr>
+            {:else}
+              {#each aliases as al (al.id)}
+                <tr>
+                  <td class="mono">
+                    <strong>{al.source}</strong>
+                    {#if al.is_catch_all}
+                      <span class="badge badge-info">{i18n.t.mail.catch_all_badge}</span>
+                    {/if}
+                  </td>
+                  <td class="mono">{al.destination}</td>
+                  <td>{formatDateTime(al.created_at, localeCode)}</td>
+                  {#if canWrite}
+                    <td>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-icon btn-danger"
+                        title={i18n.t.common.delete}
+                        aria-label={i18n.t.common.delete}
+                        onclick={() => (deleteAliasTarget = al)}
+                      >
+                        <ActionIcon name="delete" />
+                      </button>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
+{/if}
+
+{#if isAdmin}
+  <hr class="section-divider" />
+  <div class="card">
+    <div class="toolbar">
+      <h2 class="card-title">{i18n.t.mail.queue}</h2>
+      <div class="table-actions">
+        <button type="button" class="btn btn-sm" onclick={loadQueue} disabled={loadingQueue}>
           {i18n.t.common.refresh}
         </button>
-        {#if canWrite}
-          <button type="button" class="btn btn-sm btn-primary" onclick={openAddMailbox}>
-            + {i18n.t.mail.createMailbox}
-          </button>
-        {/if}
+        <button
+          type="button"
+          class="btn btn-sm btn-primary"
+          onclick={flushQueue}
+          disabled={flushingQueue || queueItems.length === 0}
+        >
+          {flushingQueue ? i18n.t.common.loading : i18n.t.mail.queue_flush}
+        </button>
       </div>
     </div>
 
@@ -636,38 +912,51 @@
       <table>
         <thead>
           <tr>
-            <th>{i18n.t.mail.email}</th>
-            <th>{i18n.t.mail.quotaMb}</th>
-            <th>{i18n.t.common.createdAt}</th>
-            {#if canWrite}
-              <th>{i18n.t.common.actions}</th>
-            {/if}
+            <th>{i18n.t.mail.queue_id}</th>
+            <th>{i18n.t.mail.queue_name}</th>
+            <th>{i18n.t.mail.queue_sender}</th>
+            <th>{i18n.t.mail.queue_recipients}</th>
+            <th>{i18n.t.mail.queue_size}</th>
+            <th>{i18n.t.mail.queue_arrival}</th>
+            <th>{i18n.t.common.actions}</th>
           </tr>
         </thead>
         <tbody>
-          {#if loadingMailboxes && mailboxes.length === 0}
-            <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.common.loading}</td></tr>
-          {:else if mailboxes.length === 0}
-            <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.common.noData}</td></tr>
+          {#if loadingQueue && queueItems.length === 0}
+            <tr><td colspan="7" class="empty-state">{i18n.t.common.loading}</td></tr>
+          {:else if queueItems.length === 0}
+            <tr><td colspan="7" class="empty-state">{i18n.t.mail.queue_empty}</td></tr>
           {:else}
-            {#each mailboxes as mb (mb.id)}
+            {#each queueItems as q (q.queue_id)}
               <tr>
-                <td class="mono"><strong>{mb.email}</strong></td>
-                <td>{mb.quota_mb === 0 ? i18n.t.common.unlimited : formatQuota(mb.quota_mb, 'MB')}</td>
-                <td>{formatDateTime(mb.created_at, localeCode)}</td>
-                {#if canWrite}
-                  <td>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-icon btn-danger"
-                      title={i18n.t.common.delete}
-                      aria-label={i18n.t.common.delete}
-                      onclick={() => (deleteMailboxTarget = mb)}
-                    >
-                      <ActionIcon name="delete" />
-                    </button>
-                  </td>
-                {/if}
+                <td class="mono"><strong>{q.queue_id}</strong></td>
+                <td><span class="badge badge-info">{q.queue_name}</span></td>
+                <td class="mono">{q.sender || '—'}</td>
+                <td class="mono">
+                  {#if q.recipients && q.recipients.length > 0}
+                    {q.recipients.map((r) => (r.delay_reason ? `${r.address} (${r.delay_reason})` : r.address)).join(', ')}
+                  {:else}
+                    —
+                  {/if}
+                </td>
+                <td class="mono">{q.message_size} B</td>
+                <td>
+                  {typeof q.arrival_time === 'number'
+                    ? formatDateTime(new Date(q.arrival_time * 1000).toISOString(), localeCode)
+                    : formatDateTime(String(q.arrival_time), localeCode)}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
+                    onclick={() => deleteQueueItem(q.queue_id)}
+                    disabled={deletingQueueId === q.queue_id}
+                  >
+                    <ActionIcon name="delete" />
+                  </button>
+                </td>
               </tr>
             {/each}
           {/if}
@@ -1194,6 +1483,86 @@
   {#snippet footer()}
     <button type="button" class="btn btn-primary" onclick={() => (clientConfigOpen = false)}>
       {i18n.t.common.close}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={addAliasOpen}
+  title={i18n.t.mail.add_alias}
+  onclose={() => (addAliasOpen = false)}
+>
+  <form id="alias-form" onsubmit={submitAlias}>
+    {#if aliasFormError}
+      <div class="alert alert-danger" role="alert">{aliasFormError}</div>
+    {/if}
+
+    <div class="form-group">
+      <label class="checkbox-row">
+        <input type="checkbox" bind:checked={fAliasCatchAll} />
+        <span>{i18n.t.mail.catch_all}</span>
+      </label>
+    </div>
+
+    {#if !fAliasCatchAll}
+      <div class="form-group">
+        <label class="form-label" for="alias-local">{i18n.t.mail.localPart}</label>
+        <input
+          id="alias-local"
+          type="text"
+          class="form-control"
+          bind:value={fAliasLocalPart}
+          required={!fAliasCatchAll}
+          placeholder={i18n.t.mail.localPartPlaceholder}
+        />
+        {#if selectedDomain}
+          <div class="form-hint mono">{fAliasLocalPart.trim() || 'alias'}@{selectedDomain.domain}</div>
+        {/if}
+      </div>
+    {/if}
+
+    <div class="form-group">
+      <label class="form-label" for="alias-dest">{i18n.t.mail.destination}</label>
+      <input
+        id="alias-dest"
+        type="email"
+        class="form-control"
+        bind:value={fAliasDestination}
+        required
+        placeholder="admin@example.com"
+      />
+    </div>
+  </form>
+
+  {#snippet footer()}
+    <button type="button" class="btn" onclick={() => (addAliasOpen = false)}>
+      {i18n.t.common.cancel}
+    </button>
+    <button type="submit" form="alias-form" class="btn btn-primary" disabled={savingAlias}>
+      {savingAlias ? i18n.t.common.loading : i18n.t.common.create}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={deleteAliasTarget !== null}
+  title={i18n.t.common.delete}
+  onclose={() => (deleteAliasTarget = null)}
+>
+  <p class="mono">
+    {deleteAliasTarget ? `${deleteAliasTarget.source} -> ${deleteAliasTarget.destination}` : ''}
+  </p>
+  {#snippet footer()}
+    <button type="button" class="btn" onclick={() => (deleteAliasTarget = null)}>
+      {i18n.t.common.cancel}
+    </button>
+    <button
+      type="button"
+      class="btn btn-danger"
+      onclick={confirmDeleteAlias}
+      disabled={deletingAlias}
+    >
+      {deletingAlias ? i18n.t.common.loading : i18n.t.common.delete}
     </button>
   {/snippet}
 </Modal>

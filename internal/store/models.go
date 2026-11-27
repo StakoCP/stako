@@ -258,6 +258,15 @@ type Mailbox struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type MailAlias struct {
+	ID           string    `json:"id"`
+	MailDomainID string    `json:"mail_domain_id"`
+	Source       string    `json:"source"`
+	Destination  string    `json:"destination"`
+	IsCatchAll   bool      `json:"is_catch_all"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type Backup struct {
 	ID        string    `json:"id"`
 	UserID    *string   `json:"user_id"`
