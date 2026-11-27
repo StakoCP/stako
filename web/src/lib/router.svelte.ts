@@ -7,6 +7,7 @@ export type RouteName =
   | 'domains'
   | 'dns'
   | 'apps'
+  | 'wordpress'
   | 'git-deploy'
   | 'docker'
   | 'catalog'
@@ -55,6 +56,7 @@ function parseHash(): RouteMatch {
   if (path === '/domains') return { name: 'domains', params: {}, path };
   if (path === '/dns') return { name: 'dns', params: {}, path };
   if (path === '/apps') return { name: 'apps', params: {}, path };
+  if (path === '/wordpress') return { name: 'wordpress', params: {}, path };
   if (path === '/git-deploy') return { name: 'git-deploy', params: {}, path };
   if (path === '/docker') return { name: 'docker', params: {}, path };
   if (path === '/catalog') return { name: 'catalog', params: {}, path };

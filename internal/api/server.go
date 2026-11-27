@@ -309,6 +309,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/system/services/{id}/install", s.requireAuth(s.handleInstallSysService))
 	mux.HandleFunc("DELETE /api/v1/system/services/{id}", s.requireAuth(s.handleUninstallSysService))
 
+	// WordPress Toolkit
+	mux.HandleFunc("GET /api/v1/wordpress", s.requireAuth(s.handleListWPSites))
+	mux.HandleFunc("POST /api/v1/wordpress/scan", s.requireAuth(s.handleScanWPSites))
+	mux.HandleFunc("POST /api/v1/wordpress/bulk-update", s.requireAuth(s.handleBulkUpdateWP))
+	mux.HandleFunc("POST /api/v1/wordpress/{id}/staging", s.requireAuth(s.handleCreateWPStaging))
+	mux.HandleFunc("POST /api/v1/wordpress/{id}/push-staging", s.requireAuth(s.handlePushWPStaging))
+	mux.HandleFunc("POST /api/v1/wordpress/{id}/harden", s.requireAuth(s.handleHardenWPSite))
+	mux.HandleFunc("POST /api/v1/wordpress/{id}/autologin", s.requireAuth(s.handleAutoLoginWPSite))
+	mux.HandleFunc("DELETE /api/v1/wordpress/{id}", s.requireAuth(s.handleDeleteWPSite))
+
 	// Audit, Jobs, System
 	mux.HandleFunc("GET /api/v1/audit", s.requireAuth(s.handleListAudit))
 	mux.HandleFunc("GET /api/v1/audit/verify", s.requireAuth(s.handleVerifyAudit))

@@ -162,6 +162,10 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdGitPreviewDeploy
 	case "git.preview_delete":
 		cmd = agentproto.CmdGitPreviewDelete
+	case "wp.update":
+		cmd = agentproto.CmdWPUpdate
+	case "wp.staging":
+		cmd = agentproto.CmdWPStaging
 	case "panel.import":
 		cmd = agentproto.CmdPanelImport
 	case "migration.export":

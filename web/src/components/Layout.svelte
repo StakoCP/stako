@@ -92,6 +92,12 @@
           roles: ['admin', 'reseller', 'user', 'readonly'],
         },
         {
+          path: '/wordpress',
+          label: () => i18n.t.nav.wordpress,
+          activeNames: ['wordpress'],
+          roles: ['admin', 'reseller', 'user', 'readonly'],
+        },
+        {
           path: '/git-deploy',
           label: () => i18n.t.nav.gitDeploy,
           activeNames: ['git-deploy'],

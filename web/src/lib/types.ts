@@ -735,3 +735,30 @@ export interface PublicStatusResponse {
   checked_at: string;
   monitors: PublicStatusMonitor[];
 }
+
+export interface WPSecurityIssue {
+  id: string;
+  severity: string;
+  title: string;
+  fixed: boolean;
+}
+
+export interface WPSite {
+  id: string;
+  user_id: string;
+  domain_id: string;
+  domain: string;
+  path: string;
+  wp_version: string;
+  php_version: string;
+  admin_url: string;
+  is_staging: boolean;
+  parent_id: string;
+  updates_core: number;
+  updates_plugins: number;
+  updates_themes: number;
+  security_score: number;
+  security_issues: string;
+  last_scanned_at: string;
+  created_at: string;
+}

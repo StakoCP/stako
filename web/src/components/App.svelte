@@ -39,6 +39,7 @@
   import TerminalView from '../views/TerminalView.svelte';
   import UsersView from '../views/UsersView.svelte';
   import WebhooksView from '../views/WebhooksView.svelte';
+  import WordPressView from '../views/WordPressView.svelte';
 
   onMount(() => {
     document.documentElement.lang = i18n.locale;
@@ -84,6 +85,8 @@
       <DnsView />
     {:else if router.current.name === 'apps'}
       <AppsView />
+    {:else if router.current.name === 'wordpress'}
+      <WordPressView />
     {:else if router.current.name === 'git-deploy'}
       <GitDeployView />
     {:else if router.current.name === 'docker'}

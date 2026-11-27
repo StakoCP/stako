@@ -1590,6 +1590,21 @@ logfile /var/log/redis/redis-server-%s.log
 		resp.Output = "removed preview container " + containerName
 		return resp
 
+	case agentproto.CmdWPScan:
+		return wpScanSites(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdWPUpdate:
+		return wpUpdateSite(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdWPStaging:
+		return wpStagingSync(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdWPSecurityHarden:
+		return wpHardenSite(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdWPAutoLogin:
+		return wpAutoLogin(resp, dryRun, logger, req.Args)
+
 	case agentproto.CmdPanelImport:
 		return runPanelImport(resp, dryRun, logger, req.Args)
 
@@ -3194,5 +3209,280 @@ func runPanelImport(resp agentproto.Response, dryRun bool, logger *slog.Logger, 
 	if resp.Output == "" {
 		resp.Output = "Import completed for " + archPath
 	}
+	return resp
+}
+
+func wpScanSites(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	if dryRun {
+		var sites []map[string]any
+		if domsRaw, ok := args["domains"].([]any); ok {
+			for _, item := range domsRaw {
+				m, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				dom, _ := m["domain"].(string)
+				docroot, _ := m["docroot"].(string)
+				tpl, _ := m["template"].(string)
+				if tpl == "wordpress" || strings.Contains(strings.ToLower(dom), "wp") || strings.Contains(strings.ToLower(dom), "blog") {
+					sites = append(sites, map[string]any{
+						"domain_id":       m["domain_id"],
+						"user_id":         m["user_id"],
+						"domain":          dom,
+						"path":            docroot,
+						"wp_version":      "6.7.1",
+						"php_version":     m["php_version"],
+						"admin_url":       "https://" + dom + "/wp-admin/",
+						"updates_core":    0,
+						"updates_plugins": 2,
+						"updates_themes":  1,
+						"security_score":  75,
+						"security_issues": []map[string]any{
+							{"id": "wp_file_edit", "severity": "medium", "title": "DISALLOW_FILE_EDIT is not enabled", "fixed": false},
+							{"id": "wp_xmlrpc", "severity": "low", "title": "xmlrpc.php is accessible", "fixed": false},
+						},
+					})
+				}
+			}
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"sites": sites}
+		return resp
+	}
+
+	var sites []map[string]any
+	hasWPCLI := false
+	if _, err := exec.LookPath("wp"); err == nil {
+		hasWPCLI = true
+	}
+	if domsRaw, ok := args["domains"].([]any); ok {
+		for _, item := range domsRaw {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			dom, _ := m["domain"].(string)
+			docroot, _ := m["docroot"].(string)
+			username, _ := m["username"].(string)
+			if docroot == "" {
+				continue
+			}
+			verFile := filepath.Join(docroot, "wp-includes", "version.php")
+			cfgFile := filepath.Join(docroot, "wp-config.php")
+			verBytes, err := os.ReadFile(verFile)
+			if err != nil {
+				continue
+			}
+			wpVer := ""
+			for _, line := range strings.Split(string(verBytes), "\n") {
+				if strings.Contains(line, "$wp_version") && strings.Contains(line, "'") {
+					parts := strings.Split(line, "'")
+					if len(parts) >= 2 {
+						wpVer = parts[1]
+						break
+					}
+				}
+			}
+			updatesCore, updatesPlugins, updatesThemes := 0, 0, 0
+			if hasWPCLI && agentproto.ValidateLinuxUsername(username) == nil {
+				if out, err := exec.Command("sudo", "-u", username, "wp", "core", "check-update", "--path="+docroot, "--format=count").Output(); err == nil {
+					if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil {
+						updatesCore = n
+					}
+				}
+				if out, err := exec.Command("sudo", "-u", username, "wp", "plugin", "list", "--update=available", "--path="+docroot, "--format=count").Output(); err == nil {
+					if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil {
+						updatesPlugins = n
+					}
+				}
+				if out, err := exec.Command("sudo", "-u", username, "wp", "theme", "list", "--update=available", "--path="+docroot, "--format=count").Output(); err == nil {
+					if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil {
+						updatesThemes = n
+					}
+				}
+			}
+			score := 100
+			var issues []map[string]any
+			if cfgBytes, err := os.ReadFile(cfgFile); err == nil {
+				cfgStr := string(cfgBytes)
+				if !strings.Contains(cfgStr, "DISALLOW_FILE_EDIT") {
+					score -= 15
+					issues = append(issues, map[string]any{"id": "wp_file_edit", "severity": "medium", "title": "DISALLOW_FILE_EDIT is not enabled", "fixed": false})
+				}
+				if strings.Contains(cfgStr, "'WP_DEBUG', true") || strings.Contains(cfgStr, `"WP_DEBUG", true`) {
+					score -= 15
+					issues = append(issues, map[string]any{"id": "wp_debug", "severity": "high", "title": "WP_DEBUG is enabled in production", "fixed": false})
+				}
+			}
+			if info, err := os.Stat(cfgFile); err == nil && info.Mode().Perm()&0o077 != 0 {
+				score -= 20
+				issues = append(issues, map[string]any{"id": "wp_config_perms", "severity": "high", "title": "wp-config.php permissions should be 0600", "fixed": false})
+			}
+			if _, err := os.Stat(filepath.Join(docroot, "xmlrpc.php")); err == nil {
+				score -= 10
+				issues = append(issues, map[string]any{"id": "wp_xmlrpc", "severity": "low", "title": "xmlrpc.php exists", "fixed": false})
+			}
+			if score < 0 {
+				score = 0
+			}
+			if issues == nil {
+				issues = []map[string]any{}
+			}
+			sites = append(sites, map[string]any{
+				"domain_id":       m["domain_id"],
+				"user_id":         m["user_id"],
+				"domain":          dom,
+				"path":            docroot,
+				"wp_version":      wpVer,
+				"php_version":     m["php_version"],
+				"admin_url":       "https://" + dom + "/wp-admin/",
+				"updates_core":    updatesCore,
+				"updates_plugins": updatesPlugins,
+				"updates_themes":  updatesThemes,
+				"security_score":  score,
+				"security_issues": issues,
+			})
+		}
+	}
+	logger.Info("scanned wordpress installations", "count", len(sites))
+	resp.OK = true
+	resp.Data = map[string]any{"sites": sites}
+	return resp
+}
+
+func wpUpdateSite(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	docroot, _ := args["path"].(string)
+	username, _ := args["username"].(string)
+	if dryRun || docroot == "" {
+		return runExec(resp, true, logger, "wp", "core", "update", "--path="+docroot)
+	}
+	if _, err := exec.LookPath("wp"); err != nil {
+		resp.Error = "WP-CLI (wp) is not installed on server"
+		return resp
+	}
+	if err := agentproto.ValidateLinuxUsername(username); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	var outputs []string
+	for _, sub := range [][]string{
+		{"core", "update"},
+		{"plugin", "update", "--all"},
+		{"theme", "update", "--all"},
+	} {
+		cmdArgs := append([]string{"-u", username, "wp"}, append(sub, "--path="+docroot)...)
+		out, err := exec.Command("sudo", cmdArgs...).CombinedOutput()
+		outputs = append(outputs, strings.TrimSpace(string(out)))
+		if err != nil {
+			resp.Error = fmt.Sprintf("wp %s: %v: %s", sub[0], err, strings.TrimSpace(string(out)))
+			return resp
+		}
+	}
+	resp.OK = true
+	resp.Output = strings.Join(outputs, "\n")
+	return resp
+}
+
+func wpStagingSync(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	srcPath, _ := args["src_path"].(string)
+	dstPath, _ := args["dst_path"].(string)
+	srcDomain, _ := args["src_domain"].(string)
+	dstDomain, _ := args["dst_domain"].(string)
+	username, _ := args["username"].(string)
+	action, _ := args["action"].(string) // "create" or "push"
+	if action == "" {
+		action = "create"
+	}
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] wp staging %s: %s (%s) -> %s (%s)", action, srcDomain, srcPath, dstDomain, dstPath)
+		return resp
+	}
+	if err := agentproto.ValidateLinuxUsername(username); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	_ = os.MkdirAll(dstPath, 0o750)
+	if out, err := exec.Command("cp", "-a", srcPath+"/.", dstPath+"/").CombinedOutput(); err != nil {
+		resp.Error = fmt.Sprintf("copy files: %v: %s", err, strings.TrimSpace(string(out)))
+		return resp
+	}
+	ensureDocrootPermissions(username, dstPath)
+	if _, err := exec.LookPath("wp"); err == nil && srcDomain != "" && dstDomain != "" {
+		_ = exec.Command("sudo", "-u", username, "wp", "search-replace", srcDomain, dstDomain, "--path="+dstPath).Run()
+	}
+	resp.OK = true
+	resp.Output = fmt.Sprintf("WordPress staging %s completed (%s -> %s)", action, srcDomain, dstDomain)
+	return resp
+}
+
+func wpHardenSite(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	docroot, _ := args["path"].(string)
+	if dryRun || docroot == "" {
+		return runExec(resp, true, logger, "chmod", "0600", filepath.Join(docroot, "wp-config.php"))
+	}
+	cfgFile := filepath.Join(docroot, "wp-config.php")
+	if b, err := os.ReadFile(cfgFile); err == nil {
+		content := string(b)
+		if !strings.Contains(content, "DISALLOW_FILE_EDIT") {
+			needle := "/* That's all, stop editing!"
+			add := "define('DISALLOW_FILE_EDIT', true);\n"
+			if strings.Contains(content, needle) {
+				content = strings.Replace(content, needle, add+needle, 1)
+			} else {
+				content += "\n" + add
+			}
+		}
+		content = strings.ReplaceAll(content, "'WP_DEBUG', true", "'WP_DEBUG', false")
+		content = strings.ReplaceAll(content, `"WP_DEBUG", true`, `"WP_DEBUG", false`)
+		_ = os.WriteFile(cfgFile, []byte(content), 0o600)
+		_ = os.Chmod(cfgFile, 0o600)
+	}
+	htaccess := filepath.Join(docroot, ".htaccess")
+	if b, err := os.ReadFile(htaccess); err == nil && !strings.Contains(string(b), "xmlrpc.php") {
+		block := "\n# Stako WP Security\n<Files xmlrpc.php>\n  Require all denied\n</Files>\n"
+		_ = os.WriteFile(htaccess, append(b, []byte(block)...), 0o644)
+	}
+	resp.OK = true
+	resp.Output = "WordPress security hardening applied"
+	return resp
+}
+
+func wpAutoLogin(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	docroot, _ := args["path"].(string)
+	domain, _ := args["domain"].(string)
+	token, _ := args["token"].(string)
+	if token == "" {
+		var buf [16]byte
+		_, _ = rand.Read(buf[:])
+		token = hex.EncodeToString(buf[:])
+	}
+	fileName := "_stako_login_" + token[:12] + ".php"
+	loginURL := fmt.Sprintf("https://%s/%s?token=%s", domain, fileName, token)
+	if dryRun || docroot == "" {
+		resp.OK = true
+		resp.Data = map[string]any{"login_url": loginURL, "expires_in": 60}
+		return resp
+	}
+	phpScript := fmt.Sprintf(`<?php
+@unlink(__FILE__);
+if (!isset($_GET['token']) || !hash_equals(%q, (string)$_GET['token']) || time() > %d) {
+    http_response_code(403);
+    exit('Expired or invalid token');
+}
+require_once __DIR__ . '/wp-load.php';
+$admins = get_users(['role' => 'administrator', 'number' => 1, 'orderby' => 'ID', 'order' => 'ASC']);
+if (empty($admins)) { exit('No administrator found'); }
+wp_set_current_user($admins[0]->ID);
+wp_set_auth_cookie($admins[0]->ID, false);
+wp_safe_redirect(admin_url());
+exit;
+`, token, time.Now().UTC().Add(60*time.Second).Unix())
+	if err := os.WriteFile(filepath.Join(docroot, fileName), []byte(phpScript), 0o644); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	resp.OK = true
+	resp.Data = map[string]any{"login_url": loginURL, "expires_in": 60}
 	return resp
 }

@@ -181,6 +181,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateGitPreviews(); err != nil {
 		return err
 	}
+	if err := s.migrateWordPress(); err != nil {
+		return err
+	}
 	return s.seedDefaultPackages()
 }
 

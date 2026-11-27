@@ -1161,3 +1161,90 @@ func TestGitPreviewEnvironments(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestWordPressToolkit(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Create a WordPress domain
+	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{
+		"domain": "wpblog.example.com", "stack": "nginx_apache", "template": "wordpress",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create wp domain = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Scan WordPress sites
+	rec = doReq(t, h, "POST", "/api/v1/wordpress/scan", nil, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("scan wp = %d: %s", rec.Code, rec.Body.String())
+	}
+	var listResp struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Domain string `json:"domain"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &listResp)
+	if len(listResp.Items) == 0 {
+		t.Fatalf("expected at least 1 scanned WP site, got 0: %s", rec.Body.String())
+	}
+	wpID := listResp.Items[0].ID
+
+	// Bulk update
+	if rec := doReq(t, h, "POST", "/api/v1/wordpress/bulk-update", map[string]any{
+		"site_ids": []string{wpID},
+	}, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("bulk update = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Harden security
+	if rec := doReq(t, h, "POST", "/api/v1/wordpress/"+wpID+"/harden", nil, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("harden = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Auto-login
+	rec = doReq(t, h, "POST", "/api/v1/wordpress/"+wpID+"/autologin", nil, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"login_url"`)) {
+		t.Fatalf("autologin = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Create staging + push staging
+	rec = doReq(t, h, "POST", "/api/v1/wordpress/"+wpID+"/staging", map[string]any{
+		"staging_domain": "staging.wpblog.example.com",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create staging = %d: %s", rec.Code, rec.Body.String())
+	}
+	var stgResp struct {
+		Site struct {
+			ID string `json:"id"`
+		} `json:"site"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &stgResp)
+
+	if rec := doReq(t, h, "POST", "/api/v1/wordpress/"+stgResp.Site.ID+"/push-staging", nil, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("push staging = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Delete staging site entry
+	if rec := doReq(t, h, "DELETE", "/api/v1/wordpress/"+stgResp.Site.ID, nil, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("delete wp site = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

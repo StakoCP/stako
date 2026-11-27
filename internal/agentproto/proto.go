@@ -87,6 +87,11 @@ const (
 	CmdMigrationListBundles = "migration.list_bundles"
 	CmdGitPreviewDeploy     = "git.preview_deploy"
 	CmdGitPreviewDelete     = "git.preview_delete"
+	CmdWPScan               = "wp.scan"
+	CmdWPUpdate             = "wp.update"
+	CmdWPStaging            = "wp.staging"
+	CmdWPSecurityHarden     = "wp.harden"
+	CmdWPAutoLogin          = "wp.autologin"
 )
 
 type Request struct {
