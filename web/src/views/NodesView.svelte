@@ -5,7 +5,7 @@
   import { api, ApiError } from '../lib/api';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
-  import type { ImportSourcePanel, ServerNode, ServerNodeRole } from '../lib/types';
+  import type { ServerNode, ServerNodeRole } from '../lib/types';
 
   let nodes = $state<ServerNode[]>([]);
   let loading = $state(true);
@@ -26,11 +26,6 @@
   // Delete modal
   let deleteTarget = $state<ServerNode | null>(null);
   let deleting = $state(false);
-
-  // Panel Import card
-  let sourcePanel = $state<ImportSourcePanel>('hestiacp');
-  let archivePath = $state('');
-  let importing = $state(false);
 
   function statusBadge(status: string): string {
     const s = status.toLowerCase();
@@ -117,28 +112,6 @@
       deleting = false;
     }
   }
-
-  async function submitImport(e: SubmitEvent) {
-    e.preventDefault();
-    importing = true;
-    try {
-      const res = await api.post<{ job_id: string }>('/import', {
-        source_panel: sourcePanel,
-        archive_path: archivePath.trim(),
-      });
-      if (res.job_id) {
-        toast.success(fmt(i18n.t.import.startedToast, { jobId: res.job_id }), {
-          href: `#/jobs/${res.job_id}`,
-          label: i18n.t.import.viewJob,
-        });
-      }
-      archivePath = '';
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
-    } finally {
-      importing = false;
-    }
-  }
 </script>
 
 <div class="page-header">
@@ -203,46 +176,6 @@
       </tbody>
     </table>
   </div>
-</div>
-
-<div class="card">
-  <div class="toolbar">
-    <div>
-      <h2 class="card-title">{i18n.t.import.title}</h2>
-      <p class="page-subtitle">{i18n.t.import.subtitle}</p>
-    </div>
-  </div>
-
-  <form onsubmit={submitImport}>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label" for="import-panel">{i18n.t.import.sourcePanel}</label>
-        <select id="import-panel" class="form-control" bind:value={sourcePanel}>
-          <option value="hestiacp">{i18n.t.import.panelHestia}</option>
-          <option value="cpanel">{i18n.t.import.panelCpanel}</option>
-          <option value="vestacp">{i18n.t.import.panelVesta}</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="import-archive">{i18n.t.import.archivePath}</label>
-        <input
-          id="import-archive"
-          type="text"
-          class="form-control mono"
-          bind:value={archivePath}
-          required
-          placeholder={i18n.t.import.archivePathPlaceholder}
-        />
-      </div>
-    </div>
-
-    <div class="table-actions">
-      <button type="submit" class="btn btn-primary" disabled={importing}>
-        {importing ? i18n.t.common.loading : i18n.t.import.startImport}
-      </button>
-    </div>
-  </form>
 </div>
 
 <Modal
