@@ -370,6 +370,7 @@ export interface Container {
   image: string;
   repo_url?: string;
   repo_branch?: string;
+  local_path?: string;
   dockerfile?: string;
   ports: string[];
   volumes: string[];

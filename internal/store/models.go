@@ -188,6 +188,7 @@ type Container struct {
 	RepoURL    string    `json:"repo_url,omitempty"`
 	RepoBranch string    `json:"repo_branch,omitempty"`
 	Dockerfile string    `json:"dockerfile,omitempty"`
+	LocalPath  string    `json:"local_path,omitempty"`
 	Ports      []string  `json:"ports"`
 	Volumes    []string  `json:"volumes"`
 	EnvEnc     string    `json:"-"`

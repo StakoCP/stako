@@ -903,6 +903,7 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		repoURL, _ := req.Args["repo_url"].(string)
 		branch, _ := req.Args["repo_branch"].(string)
 		dockerfile, _ := req.Args["dockerfile"].(string)
+		localPath, _ := req.Args["local_path"].(string)
 		cpuLimit, _ := req.Args["cpu_limit"].(string)
 		if branch == "" {
 			branch = "main"
@@ -910,7 +911,20 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		if dockerfile == "" {
 			dockerfile = "Dockerfile"
 		}
-		if repoURL != "" {
+		if localPath != "" {
+			if dryRun {
+				return runExec(resp, dryRun, logger, "docker", "build+run", localPath, image)
+			}
+			if _, err := os.Stat(localPath); err != nil {
+				resp.Error = fmt.Sprintf("local_path not found: %v", err)
+				return resp
+			}
+			dfPath := filepath.Join(localPath, dockerfile)
+			if r := runExec(resp, false, logger, "sudo", "-u", username, "docker", "build", "-t", image, "-f", dfPath, localPath); !r.OK {
+				return r
+			}
+			_ = exec.Command("sudo", "-u", username, "docker", "rm", "-f", name).Run()
+		} else if repoURL != "" {
 			buildDir := fmt.Sprintf("/home/%s/.stako-docker/%s", username, name)
 			if dryRun {
 				return runExec(resp, dryRun, logger, "docker", "build+run", repoURL+"@"+branch, image)

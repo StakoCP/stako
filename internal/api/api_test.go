@@ -410,6 +410,26 @@ func TestPhase3DockerCatalogAndServices(t *testing.T) {
 		t.Fatalf("rebuild github container = %d: %s", rec.Code, rec.Body.String())
 	}
 
+	// Create & rebuild container from local path
+	rec = doReq(t, h, "POST", "/api/v1/docker/containers", map[string]any{
+		"name":       "my-local-app",
+		"local_path": "/myapp",
+		"dockerfile": "Dockerfile",
+		"ports":      []string{"8095:3000"},
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create local container = %d: %s", rec.Code, rec.Body.String())
+	}
+	var locResp struct {
+		Container struct {
+			ID string `json:"id"`
+		} `json:"container"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &locResp)
+	if rec := doReq(t, h, "POST", "/api/v1/docker/containers/"+locResp.Container.ID+"/rebuild", nil, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("rebuild local container = %d: %s", rec.Code, rec.Body.String())
+	}
+
 	// Catalog has 10+ apps, install/update/uninstall
 	rec = doReq(t, h, "GET", "/api/v1/catalog", nil, cookies, "")
 	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("wordpress")) {

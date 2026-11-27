@@ -92,6 +92,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		RepoURL    string            `json:"repo_url"`
 		RepoBranch string            `json:"repo_branch"`
 		Dockerfile string            `json:"dockerfile"`
+		LocalPath  string            `json:"local_path"`
 		UserID     *string           `json:"user_id"`
 		DomainID   *string           `json:"domain_id"`
 		Ports      []string          `json:"ports"`
@@ -109,7 +110,12 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid container name", "")
 		return
 	}
-	var repoURL, repoBranch, dockerfile string
+	owner, ok := s.resolveTargetUser(r, ac, req.UserID)
+	if !ok {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden target user", "")
+		return
+	}
+	var repoURL, repoBranch, dockerfile, localPath string
 	if strings.TrimSpace(req.RepoURL) != "" {
 		var err error
 		repoURL, repoBranch, dockerfile, err = validateGitHubRepoInput(req.RepoURL, req.RepoBranch, req.Dockerfile)
@@ -120,14 +126,33 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(req.Image) == "" {
 			req.Image = "stako-local/" + strings.ToLower(req.Name) + ":latest"
 		}
+	} else if lp := strings.TrimSpace(req.LocalPath); lp != "" {
+		if strings.Contains(lp, "..") || strings.ContainsAny(lp, " \t\n\r;&|$`\\\"'<>") {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid local_path", "")
+			return
+		}
+		if !strings.HasPrefix(lp, "/home/") {
+			lp = "/home/" + owner.Username + "/" + strings.TrimPrefix(lp, "/")
+		} else if ac.User.Role != "admin" && !strings.HasPrefix(lp, "/home/"+owner.Username+"/") && lp != "/home/"+owner.Username {
+			WriteProblem(w, http.StatusForbidden, "forbidden", "local_path must be inside user home directory", "")
+			return
+		}
+		localPath = lp
+		df := strings.TrimSpace(req.Dockerfile)
+		if df == "" {
+			df = "Dockerfile"
+		}
+		if strings.HasPrefix(df, "/") || strings.Contains(df, "..") || strings.ContainsAny(df, " \t\n\r;&|$`\\\"'<>") {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid dockerfile path", "")
+			return
+		}
+		dockerfile = df
+		if strings.TrimSpace(req.Image) == "" {
+			req.Image = "stako-local/" + strings.ToLower(req.Name) + ":latest"
+		}
 	}
 	if err := validateContainerSecurity(req.Image, req.Volumes, ""); err != nil {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Container security policy violation", err.Error())
-		return
-	}
-	owner, ok := s.resolveTargetUser(r, ac, req.UserID)
-	if !ok {
-		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden target user", "")
 		return
 	}
 	if req.Ports == nil {
@@ -146,7 +171,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	id, _ := crypto.RandomID("c")
 	c := &store.Container{
 		ID: id, UserID: owner.ID, DomainID: req.DomainID, Name: req.Name, Image: req.Image,
-		RepoURL: repoURL, RepoBranch: repoBranch, Dockerfile: dockerfile,
+		RepoURL: repoURL, RepoBranch: repoBranch, Dockerfile: dockerfile, LocalPath: localPath,
 		Ports: req.Ports, Volumes: req.Volumes, EnvEnc: envEnc, CPULimit: req.CPULimit,
 		MemoryMB: req.MemoryMB, Status: "running",
 	}
@@ -162,6 +187,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		"repo_url":    c.RepoURL,
 		"repo_branch": c.RepoBranch,
 		"dockerfile":  c.Dockerfile,
+		"local_path":  c.LocalPath,
 		"ports":       c.Ports,
 		"cpu_limit":   c.CPULimit,
 		"memory_mb":   c.MemoryMB,
@@ -170,7 +196,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		jobID = &j.ID
 	}
 	s.audit(r, ac.User, "docker.create", "container", c.ID, "success", map[string]any{
-		"name": c.Name, "image": c.Image, "repo_url": c.RepoURL,
+		"name": c.Name, "image": c.Image, "repo_url": c.RepoURL, "local_path": c.LocalPath,
 	})
 	WriteJSON(w, http.StatusCreated, map[string]any{"container": c, "job_id": jobID})
 }
@@ -190,8 +216,8 @@ func (s *Server) handleRebuildContainer(w http.ResponseWriter, r *http.Request) 
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
 		return
 	}
-	if c.RepoURL == "" {
-		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Container is not linked to a GitHub repository", "")
+	if c.RepoURL == "" && c.LocalPath == "" {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Container is not linked to a GitHub repository or local path", "")
 		return
 	}
 	owner, _ := s.store.GetUserByID(r.Context(), c.UserID)
@@ -204,6 +230,7 @@ func (s *Server) handleRebuildContainer(w http.ResponseWriter, r *http.Request) 
 		"repo_url":    c.RepoURL,
 		"repo_branch": c.RepoBranch,
 		"dockerfile":  c.Dockerfile,
+		"local_path":  c.LocalPath,
 		"ports":       c.Ports,
 		"cpu_limit":   c.CPULimit,
 		"memory_mb":   c.MemoryMB,
@@ -212,7 +239,7 @@ func (s *Server) handleRebuildContainer(w http.ResponseWriter, r *http.Request) 
 		jobID = &j.ID
 	}
 	_ = s.store.UpdateContainerStatus(r.Context(), c.ID, "running")
-	s.audit(r, ac.User, "docker.rebuild", "container", c.ID, "success", map[string]any{"repo_url": c.RepoURL})
+	s.audit(r, ac.User, "docker.rebuild", "container", c.ID, "success", map[string]any{"repo_url": c.RepoURL, "local_path": c.LocalPath})
 	WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": jobID})
 }
 

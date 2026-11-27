@@ -38,10 +38,11 @@
   // Create container modal
   let createContainerOpen = $state(false);
   let cName = $state('');
-  let cSource = $state<'image' | 'github'>('image');
+  let cSource = $state<'image' | 'github' | 'local'>('image');
   let cImage = $state('');
   let cRepoUrl = $state('');
   let cRepoBranch = $state('main');
+  let cLocalPath = $state('');
   let cDockerfile = $state('Dockerfile');
   let cPorts = $state('');
   let cDomainId = $state('');
@@ -153,6 +154,7 @@
     cImage = '';
     cRepoUrl = '';
     cRepoBranch = 'main';
+    cLocalPath = '';
     cDockerfile = 'Dockerfile';
     cPorts = '';
     cDomainId = '';
@@ -200,6 +202,10 @@
       if (cSource === 'github') {
         body.repo_url = cRepoUrl.trim();
         body.repo_branch = cRepoBranch.trim() || 'main';
+        body.dockerfile = cDockerfile.trim() || 'Dockerfile';
+        if (cImage.trim()) body.image = cImage.trim();
+      } else if (cSource === 'local') {
+        body.local_path = cLocalPath.trim();
         body.dockerfile = cDockerfile.trim() || 'Dockerfile';
         if (cImage.trim()) body.image = cImage.trim();
       } else {
@@ -392,6 +398,8 @@
                 {c.image}
                 {#if c.repo_url}
                   <div class="mini-list-meta">{c.repo_url}@{c.repo_branch || 'main'}</div>
+                {:else if c.local_path}
+                  <div class="mini-list-meta"><span class="badge">{i18n.t.docker.localBadge}</span> {c.local_path}</div>
                 {/if}
               </td>
               <td class="mono">{c.ports && c.ports.length > 0 ? c.ports.join(', ') : '—'}</td>
@@ -434,7 +442,7 @@
                     >
                       <ActionIcon name="restart" />
                     </button>
-                    {#if c.repo_url}
+                    {#if c.repo_url || c.local_path}
                       <button
                         type="button"
                         class="btn btn-sm btn-icon"
@@ -570,6 +578,7 @@
         <select id="c-source" class="form-control" bind:value={cSource}>
           <option value="image">{i18n.t.docker.sourceImage}</option>
           <option value="github">{i18n.t.docker.sourceGithub}</option>
+          <option value="local">{i18n.t.docker.sourceLocal}</option>
         </select>
       </div>
     </div>
@@ -585,6 +594,41 @@
           placeholder="nginx:alpine"
           required
         />
+      </div>
+    {:else if cSource === 'local'}
+      <div class="form-group">
+        <label class="form-label" for="c-local-path">{i18n.t.docker.localPath}</label>
+        <input
+          id="c-local-path"
+          type="text"
+          class="form-control mono"
+          bind:value={cLocalPath}
+          placeholder={i18n.t.docker.localPathPlaceholder}
+          required
+        />
+        <p class="form-hint">{i18n.t.docker.localPathHint}</p>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="c-dockerfile">{i18n.t.docker.dockerfile}</label>
+          <input
+            id="c-dockerfile"
+            type="text"
+            class="form-control mono"
+            bind:value={cDockerfile}
+            placeholder="Dockerfile"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="c-image">{i18n.t.docker.image}</label>
+          <input
+            id="c-image"
+            type="text"
+            class="form-control mono"
+            bind:value={cImage}
+            placeholder="myapp:latest"
+          />
+        </div>
       </div>
     {:else}
       <div class="form-group">
