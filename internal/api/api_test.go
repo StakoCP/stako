@@ -850,3 +850,76 @@ func TestSystemServicesManager(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestCentralizedLogsRotationAndShipping(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Query centralized logs
+	for _, svc := range []string{"all", "web", "mail", "auth", "container", "panel"} {
+		rec = doReq(t, h, "GET", "/api/v1/logs?service="+svc+"&lines=50", nil, cookies, "")
+		if rec.Code != 200 {
+			t.Fatalf("query logs (%s) = %d: %s", svc, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/logs?service=invalid", nil, cookies, ""); rec.Code != 422 {
+		t.Fatalf("expected 422 for invalid service, got %d", rec.Code)
+	}
+
+	// Rotation policy get/put/run
+	if rec := doReq(t, h, "GET", "/api/v1/logs/rotation", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("get rotation = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "PUT", "/api/v1/logs/rotation", map[string]any{
+		"frequency": "weekly", "rotate": 30, "maxsize": "250M", "compress": true,
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("set rotation = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/logs/rotate", nil, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("run rotation = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Shipping config get/put (secret not returned in plaintext)
+	if rec := doReq(t, h, "PUT", "/api/v1/logs/shipping", map[string]any{
+		"syslog_enabled":       true,
+		"syslog_host":          "logs.example.com",
+		"syslog_port":          6514,
+		"syslog_protocol":      "tls",
+		"syslog_format":        "rfc5424",
+		"loki_enabled":         true,
+		"loki_url":             "https://loki.example.com/loki/api/v1/push",
+		"loki_tenant_id":       "stako-prod",
+		"loki_username":        "shipper",
+		"loki_password":        "super-secret-token",
+		"loki_labels":          "env=prod,panel=stako",
+		"loki_tls_skip_verify": false,
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("set shipping = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "GET", "/api/v1/logs/shipping", nil, cookies, "")
+	if rec.Code != 200 {
+		t.Fatalf("get shipping = %d: %s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("super-secret-token")) {
+		t.Fatalf("loki password leaked in GET /api/v1/logs/shipping")
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"has_loki_password":true`)) {
+		t.Fatalf("expected has_loki_password:true, got %s", rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

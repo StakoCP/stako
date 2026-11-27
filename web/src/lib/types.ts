@@ -616,3 +616,40 @@ export interface SystemService {
   active: 'active' | 'inactive' | 'failed' | 'not-installed' | string;
   enabled: boolean;
 }
+
+export interface CentralLogEntry {
+  timestamp: string;
+  service: string;
+  source: string;
+  level: string;
+  message: string;
+}
+
+export interface CentralLogsResponse {
+  entries: CentralLogEntry[];
+  sources: string[];
+  total: number;
+}
+
+export interface LogRotationConfig {
+  frequency: 'daily' | 'weekly';
+  rotate: number;
+  maxsize: string;
+  compress: boolean;
+}
+
+export interface LogShippingConfig {
+  syslog_enabled: boolean;
+  syslog_host: string;
+  syslog_port: number;
+  syslog_protocol: 'udp' | 'tcp' | 'tls';
+  syslog_format: 'rfc5424' | 'rfc3164';
+  loki_enabled: boolean;
+  loki_url: string;
+  loki_tenant_id: string;
+  loki_username: string;
+  loki_password?: string;
+  has_loki_password?: boolean;
+  loki_labels: string;
+  loki_tls_skip_verify: boolean;
+}

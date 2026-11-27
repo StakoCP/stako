@@ -206,6 +206,12 @@
           roles: ['admin'],
         },
         {
+          path: '/logs',
+          label: () => i18n.t.nav.logs,
+          activeNames: ['logs'],
+          roles: ['admin'],
+        },
+        {
           path: '/nodes',
           label: () => i18n.t.nav.nodes,
           activeNames: ['nodes'],

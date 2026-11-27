@@ -1691,6 +1691,15 @@ logfile /var/log/redis/redis-server-%s.log
 		}
 		return r
 
+	case agentproto.CmdLogsQuery:
+		return queryCentralLogs(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdLogsRotate:
+		return applyLogRotation(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdLogsShippingApply:
+		return applyLogShipping(resp, dryRun, logger, req.Args)
+
 	default:
 		logger.Warn("rejected unknown command", "command", req.Command)
 		resp.Error = "command not in allowlist: " + req.Command
@@ -2328,4 +2337,349 @@ func runSecurityScan() []map[string]any {
 	})
 
 	return findings
+}
+
+type centralLogEntry struct {
+	Timestamp string `json:"timestamp"`
+	Service   string `json:"service"`
+	Source    string `json:"source"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+}
+
+func inferLogLevel(line string) string {
+	low := strings.ToLower(line)
+	switch {
+	case strings.Contains(low, "error") || strings.Contains(low, "crit") || strings.Contains(low, "fatal") || strings.Contains(low, "panic") || strings.Contains(low, "emerg") || strings.Contains(low, "failed"):
+		return "error"
+	case strings.Contains(low, "warn"):
+		return "warn"
+	default:
+		return "info"
+	}
+}
+
+func tailLogLines(path string, maxLines int) []string {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return nil
+	}
+	out, err := exec.Command("tail", "-n", strconv.Itoa(maxLines), path).Output()
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, l := range strings.Split(strings.TrimRight(string(out), "\r\n"), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+func queryCentralLogs(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	service, _ := args["service"].(string)
+	if service == "" {
+		service = "all"
+	}
+	sourceFilter, _ := args["source"].(string)
+	queryStr, _ := args["query"].(string)
+	queryLow := strings.ToLower(strings.TrimSpace(queryStr))
+	levelFilter, _ := args["level"].(string)
+	lines := 200
+	if lf, ok := args["lines"].(float64); ok && lf > 0 {
+		lines = min(int(lf), 1000)
+	}
+
+	var raw []centralLogEntry
+	sourceSet := map[string]bool{}
+	addEntry := func(svc, src, ts, msg string) {
+		sourceSet[src] = true
+		lvl := inferLogLevel(msg)
+		if service != "all" && svc != service {
+			return
+		}
+		if sourceFilter != "" && src != sourceFilter {
+			return
+		}
+		if levelFilter != "" && levelFilter != "all" && lvl != levelFilter {
+			return
+		}
+		if queryLow != "" && !strings.Contains(strings.ToLower(msg), queryLow) && !strings.Contains(strings.ToLower(src), queryLow) {
+			return
+		}
+		raw = append(raw, centralLogEntry{
+			Timestamp: ts,
+			Service:   svc,
+			Source:    src,
+			Level:     lvl,
+			Message:   msg,
+		})
+	}
+
+	if dryRun {
+		now := time.Now().UTC()
+		samples := []centralLogEntry{
+			{Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339), Service: "web", Source: "nginx/access.log", Message: `203.0.113.10 - - "GET /api/v1/health HTTP/1.1" 200 42 "-" "curl/8.5.0"`},
+			{Timestamp: now.Add(-4 * time.Minute).Format(time.RFC3339), Service: "web", Source: "nginx/error.log", Message: `[warn] 1244#1244: *18 upstream server temporarily disabled while connecting to upstream`},
+			{Timestamp: now.Add(-3 * time.Minute).Format(time.RFC3339), Service: "mail", Source: "postfix/mail.log", Message: `postfix/smtp[2104]: 9A2F140B1: to=<user@example.com>, relay=email-smtp.us-east-1.amazonaws.com[54.243.1.1]:587, status=sent (250 Ok)`},
+			{Timestamp: now.Add(-2 * time.Minute).Format(time.RFC3339), Service: "auth", Source: "sshd/auth.log", Message: `sshd[3312]: Failed password for invalid user admin from 198.51.100.44 port 51822 ssh2`},
+			{Timestamp: now.Add(-90 * time.Second).Format(time.RFC3339), Service: "container", Source: "docker/stako-app", Message: `INFO server listening on :3000`},
+			{Timestamp: now.Add(-30 * time.Second).Format(time.RFC3339), Service: "panel", Source: "stako-core", Message: `level=INFO msg="centralized log query executed"`},
+		}
+		for _, s := range samples {
+			addEntry(s.Service, s.Source, s.Timestamp, s.Message)
+		}
+	} else {
+		collectFiles := func(svc string, paths []string) {
+			for _, p := range paths {
+				src := filepath.Base(p)
+				if strings.Contains(p, "/home/") {
+					parts := strings.Split(filepath.ToSlash(p), "/")
+					if len(parts) >= 5 {
+						src = parts[4] + "/" + filepath.Base(p)
+					}
+				}
+				for _, line := range tailLogLines(p, lines) {
+					addEntry(svc, src, "", line)
+				}
+			}
+		}
+
+		if service == "all" || service == "web" {
+			webPaths := []string{"/var/log/nginx/access.log", "/var/log/nginx/error.log", "/var/log/apache2/access.log", "/var/log/apache2/error.log"}
+			if domLogs, err := filepath.Glob("/home/*/web/*/logs/*.log"); err == nil {
+				webPaths = append(webPaths, domLogs...)
+			}
+			collectFiles("web", webPaths)
+		}
+		if service == "all" || service == "mail" {
+			collectFiles("mail", []string{"/var/log/mail.log", "/var/log/mail.err"})
+			if out, err := exec.Command("journalctl", "-u", "postfix", "-u", "dovecot", "-n", strconv.Itoa(lines), "--no-pager", "-o", "short-iso").Output(); err == nil {
+				for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+					if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "--") {
+						addEntry("mail", "journal/mail", "", line)
+					}
+				}
+			}
+		}
+		if service == "all" || service == "auth" {
+			collectFiles("auth", []string{"/var/log/auth.log", "/var/log/fail2ban.log"})
+			if out, err := exec.Command("journalctl", "-u", "ssh", "-u", "sshd", "-u", "fail2ban", "-n", strconv.Itoa(lines), "--no-pager", "-o", "short-iso").Output(); err == nil {
+				for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+					if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "--") {
+						addEntry("auth", "journal/auth", "", line)
+					}
+				}
+			}
+		}
+		if service == "all" || service == "container" {
+			if out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output(); err == nil {
+				names := strings.Fields(string(out))
+				if len(names) > 10 {
+					names = names[:10]
+				}
+				per := max(20, lines/max(1, len(names)))
+				for _, name := range names {
+					if cout, err := exec.Command("docker", "logs", "--tail", strconv.Itoa(per), "--timestamps", name).CombinedOutput(); err == nil {
+						for _, line := range strings.Split(strings.TrimSpace(string(cout)), "\n") {
+							if strings.TrimSpace(line) != "" {
+								addEntry("container", "docker/"+name, "", line)
+							}
+						}
+					}
+				}
+			}
+		}
+		if service == "all" || service == "panel" {
+			if stakoLogs, err := filepath.Glob("/var/log/stako/*.log"); err == nil {
+				collectFiles("panel", stakoLogs)
+			}
+			if out, err := exec.Command("journalctl", "-u", "stako-core", "-u", "stako-agent", "-n", strconv.Itoa(lines), "--no-pager", "-o", "short-iso").Output(); err == nil {
+				for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+					if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "--") {
+						addEntry("panel", "journal/stako", "", line)
+					}
+				}
+			}
+		}
+	}
+
+	if len(raw) > lines {
+		raw = raw[len(raw)-lines:]
+	}
+	sources := make([]string, 0, len(sourceSet))
+	for s := range sourceSet {
+		sources = append(sources, s)
+	}
+	logger.Info("centralized logs queried", "service", service, "count", len(raw))
+	resp.OK = true
+	resp.Data = map[string]any{
+		"entries": raw,
+		"sources": sources,
+		"total":   len(raw),
+	}
+	return resp
+}
+
+func applyLogRotation(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	freq, _ := args["frequency"].(string)
+	if freq != "daily" && freq != "weekly" {
+		freq = "daily"
+	}
+	rotateCount := 14
+	if rf, ok := args["rotate"].(float64); ok && rf >= 1 && rf <= 365 {
+		rotateCount = int(rf)
+	}
+	maxsize, _ := args["maxsize"].(string)
+	if maxsize == "" {
+		maxsize = "100M"
+	}
+	compress := true
+	if c, ok := args["compress"].(bool); ok {
+		compress = c
+	}
+	runNow, _ := args["run_now"].(bool)
+
+	compressLine := "nocompress"
+	if compress {
+		compressLine = "compress\n    delaycompress"
+	}
+	cfg := fmt.Sprintf(`# Managed by Stako Panel
+/home/*/web/*/logs/*.log /var/log/nginx/*.log /var/log/apache2/*.log /var/log/stako/*.log {
+    %s
+    rotate %d
+    maxsize %s
+    missingok
+    notifempty
+    %s
+    copytruncate
+}
+`, freq, rotateCount, maxsize, compressLine)
+
+	const confPath = "/etc/logrotate.d/stako-centralized"
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] wrote %s (freq=%s rotate=%d maxsize=%s compress=%v run_now=%v)", confPath, freq, rotateCount, maxsize, compress, runNow)
+		return resp
+	}
+	if err := os.WriteFile(confPath, []byte(cfg), 0o644); err != nil {
+		resp.Error = fmt.Sprintf("write %s: %v", confPath, err)
+		return resp
+	}
+	if runNow {
+		return runExec(resp, false, logger, "logrotate", "-f", confPath)
+	}
+	logger.Info("applied log rotation policy", "path", confPath)
+	resp.OK = true
+	resp.Output = "Log rotation policy applied to " + confPath
+	return resp
+}
+
+func applyLogShipping(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	syslogEnabled, _ := args["syslog_enabled"].(bool)
+	syslogHost, _ := args["syslog_host"].(string)
+	syslogPort := 514
+	if sp, ok := args["syslog_port"].(float64); ok && sp > 0 && sp <= 65535 {
+		syslogPort = int(sp)
+	}
+	syslogProto, _ := args["syslog_protocol"].(string)
+	if syslogProto != "udp" && syslogProto != "tcp" && syslogProto != "tls" {
+		syslogProto = "tcp"
+	}
+	syslogFormat, _ := args["syslog_format"].(string)
+	if syslogFormat != "rfc5424" && syslogFormat != "rfc3164" {
+		syslogFormat = "rfc5424"
+	}
+
+	lokiEnabled, _ := args["loki_enabled"].(bool)
+	lokiURL, _ := args["loki_url"].(string)
+	lokiTenant, _ := args["loki_tenant_id"].(string)
+	lokiUser, _ := args["loki_username"].(string)
+	lokiPass, _ := args["loki_password"].(string)
+	lokiLabels, _ := args["loki_labels"].(string)
+	lokiSkipTLS, _ := args["loki_tls_skip_verify"].(bool)
+
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] log shipping applied (syslog=%v %s:%d/%s, loki=%v %s)", syslogEnabled, syslogHost, syslogPort, syslogProto, lokiEnabled, lokiURL)
+		return resp
+	}
+
+	const rsyslogConf = "/etc/rsyslog.d/90-stako-forward.conf"
+	if syslogEnabled && syslogHost != "" {
+		protoPrefix := "@@"
+		if syslogProto == "udp" {
+			protoPrefix = "@"
+		}
+		tmpl := "RSYSLOG_SyslogProtocol23Format"
+		if syslogFormat == "rfc3164" {
+			tmpl = "RSYSLOG_TraditionalForwardFormat"
+		}
+		target := net.JoinHostPort(syslogHost, strconv.Itoa(syslogPort))
+		content := fmt.Sprintf("# Managed by Stako Panel\n*.* %s%s;%s\n", protoPrefix, target, tmpl)
+		if err := os.WriteFile(rsyslogConf, []byte(content), 0o644); err != nil {
+			resp.Error = fmt.Sprintf("write %s: %v", rsyslogConf, err)
+			return resp
+		}
+	} else {
+		_ = os.Remove(rsyslogConf)
+	}
+	if _, err := exec.LookPath("rsyslogd"); err == nil {
+		_ = exec.Command("systemctl", "reload-or-restart", "rsyslog").Run()
+	}
+
+	_ = os.MkdirAll("/etc/stako", 0o750)
+	const promtailConf = "/etc/stako/promtail.yml"
+	if lokiEnabled && lokiURL != "" {
+		var b strings.Builder
+		b.WriteString("server:\n  http_listen_port: 9080\n  grpc_listen_port: 0\n")
+		b.WriteString("positions:\n  filename: /var/lib/stako/promtail-positions.yaml\n")
+		b.WriteString("clients:\n  - url: " + lokiURL + "\n")
+		if lokiTenant != "" {
+			b.WriteString("    tenant_id: " + lokiTenant + "\n")
+		}
+		if lokiUser != "" {
+			b.WriteString("    basic_auth:\n      username: " + lokiUser + "\n      password: " + lokiPass + "\n")
+		}
+		if lokiSkipTLS {
+			b.WriteString("    tls_config:\n      insecure_skip_verify: true\n")
+		}
+		extraLabels := ""
+		for _, pair := range strings.Split(lokiLabels, ",") {
+			kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+			if len(kv) == 2 && kv[0] != "" && kv[1] != "" {
+				extraLabels += fmt.Sprintf("          %s: %q\n", strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))
+			}
+		}
+		b.WriteString("scrape_configs:\n")
+		jobs := []struct {
+			name string
+			path string
+		}{
+			{"web", "/home/*/web/*/logs/*.log"},
+			{"nginx", "/var/log/nginx/*.log"},
+			{"mail", "/var/log/mail.log"},
+			{"auth", "/var/log/auth.log"},
+			{"panel", "/var/log/stako/*.log"},
+		}
+		for _, j := range jobs {
+			b.WriteString(fmt.Sprintf("  - job_name: stako-%s\n    static_configs:\n      - targets: [localhost]\n        labels:\n          job: stako-%s\n%s          __path__: %s\n", j.name, j.name, extraLabels, j.path))
+		}
+		if err := os.WriteFile(promtailConf, []byte(b.String()), 0o600); err != nil {
+			resp.Error = fmt.Sprintf("write %s: %v", promtailConf, err)
+			return resp
+		}
+		if _, err := os.Stat("/etc/promtail"); err == nil {
+			_ = os.WriteFile("/etc/promtail/config.yml", []byte(b.String()), 0o600)
+			_ = exec.Command("systemctl", "reload-or-restart", "promtail").Run()
+		}
+	} else {
+		_ = os.Remove(promtailConf)
+	}
+
+	logger.Info("applied log shipping config", "syslog_enabled", syslogEnabled, "loki_enabled", lokiEnabled)
+	resp.OK = true
+	resp.Output = "Log shipping configuration applied"
+	return resp
 }

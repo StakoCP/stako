@@ -25,6 +25,7 @@
   import IPsView from '../views/IPsView.svelte';
   import JobsView from '../views/JobsView.svelte';
   import LoginView from '../views/LoginView.svelte';
+  import LogsView from '../views/LogsView.svelte';
   import MailView from '../views/MailView.svelte';
   import MonitoringView from '../views/MonitoringView.svelte';
   import NodesView from '../views/NodesView.svelte';
@@ -108,6 +109,8 @@
       <SecurityView />
     {:else if router.current.name === 'monitoring' && auth.user.role === 'admin'}
       <MonitoringView />
+    {:else if router.current.name === 'logs' && auth.user.role === 'admin'}
+      <LogsView />
     {:else if router.current.name === 'nodes' && auth.user.role === 'admin'}
       <NodesView />
     {:else if router.current.name === 'configs' && auth.user.role === 'admin'}

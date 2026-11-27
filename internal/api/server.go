@@ -298,6 +298,13 @@ func (s *Server) Handler() http.Handler {
 	// Audit, Jobs, System
 	mux.HandleFunc("GET /api/v1/audit", s.requireAuth(s.handleListAudit))
 	mux.HandleFunc("GET /api/v1/audit/verify", s.requireAuth(s.handleVerifyAudit))
+	mux.HandleFunc("GET /api/v1/logs", s.requireAuth(s.handleQueryCentralLogs))
+	mux.HandleFunc("GET /api/v1/logs/rotation", s.requireAuth(s.handleGetLogRotation))
+	mux.HandleFunc("PUT /api/v1/logs/rotation", s.requireAuth(s.handleSetLogRotation))
+	mux.HandleFunc("POST /api/v1/logs/rotate", s.requireAuth(s.handleRunLogRotation))
+	mux.HandleFunc("GET /api/v1/logs/shipping", s.requireAuth(s.handleGetLogShipping))
+	mux.HandleFunc("PUT /api/v1/logs/shipping", s.requireAuth(s.handleSetLogShipping))
+	mux.HandleFunc("POST /api/v1/logs/shipping/test", s.requireAuth(s.handleTestLogShipping))
 	mux.HandleFunc("GET /api/v1/jobs", s.requireAuth(s.handleListJobs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}", s.requireAuth(s.handleGetJob))
 	mux.HandleFunc("GET /api/v1/system/info", s.requireAuth(s.handleSystemInfo))
