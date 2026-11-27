@@ -410,10 +410,42 @@ func TestPhase3DockerCatalogAndServices(t *testing.T) {
 		t.Fatalf("rebuild github container = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Catalog has 10 apps
+	// Catalog has 10+ apps, install/update/uninstall
 	rec = doReq(t, h, "GET", "/api/v1/catalog", nil, cookies, "")
 	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("wordpress")) {
 		t.Fatalf("catalog = %d", rec.Code)
+	}
+	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{
+		"domain": "catapp.example.com", "stack": "nginx_apache", "template": "php",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create catalog domain = %d: %s", rec.Code, rec.Body.String())
+	}
+	var catDom struct {
+		Domain struct {
+			ID string `json:"id"`
+		} `json:"domain"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &catDom)
+	rec = doReq(t, h, "POST", "/api/v1/catalog/install", map[string]any{
+		"app_slug": "wordpress", "domain_id": catDom.Domain.ID,
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("install catalog app = %d: %s", rec.Code, rec.Body.String())
+	}
+	var aiResp struct {
+		Install struct {
+			ID string `json:"id"`
+		} `json:"install"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &aiResp)
+	if rec := doReq(t, h, "PATCH", "/api/v1/catalog/installs/"+aiResp.Install.ID, map[string]any{
+		"domain_id": catDom.Domain.ID, "reinstall": true,
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("update catalog install = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "DELETE", "/api/v1/catalog/installs/"+aiResp.Install.ID, nil, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("delete catalog install = %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// Create Redis + RabbitMQ

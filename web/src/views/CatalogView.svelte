@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { auth } from '../lib/auth.svelte';
@@ -19,6 +20,25 @@
   let canSelectOwner = $derived(auth.user?.role === 'admin' || auth.user?.role === 'reseller');
   let domainMap = $derived(new Map(domains.map((d) => [d.id, d.domain])));
 
+  // Catalog filter & search
+  let typeFilter = $state<'all' | 'php' | 'docker'>('all');
+  let searchQuery = $state('');
+
+  let filteredCatalog = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return catalog;
+    return catalog.filter(
+      (app) =>
+        app.name.toLowerCase().includes(q) ||
+        app.slug.toLowerCase().includes(q) ||
+        app.category.toLowerCase().includes(q) ||
+        app.description.toLowerCase().includes(q),
+    );
+  });
+
+  let phpApps = $derived(filteredCatalog.filter((app) => app.type === 'php'));
+  let dockerApps = $derived(filteredCatalog.filter((app) => app.type === 'docker'));
+
   // Install modal
   let installTarget = $state<CatalogApp | null>(null);
   let fDomainId = $state('');
@@ -27,6 +47,18 @@
   let fUserId = $state('');
   let formError = $state('');
   let installing = $state(false);
+
+  // Edit install modal
+  let editTarget = $state<AppInstall | null>(null);
+  let editDomainId = $state('');
+  let editReinstall = $state(false);
+  let editError = $state('');
+  let savingEdit = $state(false);
+
+  // Redeploy & Uninstall state
+  let reinstallingId = $state<string | null>(null);
+  let deleteTarget = $state<AppInstall | null>(null);
+  let deleting = $state(false);
 
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
@@ -142,6 +174,69 @@
     if (status === 'installing') return i18n.t.catalog.statusInstalling;
     return i18n.t.catalog.statusFailed;
   }
+
+  function openEdit(inst: AppInstall) {
+    editTarget = inst;
+    editDomainId = inst.domain_id;
+    editReinstall = false;
+    editError = '';
+  }
+
+  async function submitEdit(e: SubmitEvent) {
+    e.preventDefault();
+    if (!editTarget) return;
+    editError = '';
+    savingEdit = true;
+    try {
+      const res = await api.patch<{ install: AppInstall; job_id?: string | null }>(
+        `/catalog/installs/${editTarget.id}`,
+        { domain_id: editDomainId, reinstall: editReinstall },
+      );
+      notifyJob(fmt(i18n.t.catalog.updatedSuccess, { name: editTarget.app_slug }), res.job_id);
+      editTarget = null;
+      await loadInstalls();
+    } catch (err) {
+      editError = formatApiError(err);
+    } finally {
+      savingEdit = false;
+    }
+  }
+
+  async function handleReinstall(inst: AppInstall) {
+    reinstallingId = inst.id;
+    try {
+      const res = await api.patch<{ install: AppInstall; job_id?: string | null }>(
+        `/catalog/installs/${inst.id}`,
+        { domain_id: inst.domain_id, reinstall: true },
+      );
+      notifyJob(fmt(i18n.t.catalog.updatedSuccess, { name: inst.app_slug }), res.job_id);
+      await loadInstalls();
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally {
+      reinstallingId = null;
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    deleting = true;
+    try {
+      const res = await api.delete<{ job_id?: string | null } | void>(
+        `/catalog/installs/${deleteTarget.id}`,
+      );
+      notifyJob(
+        fmt(i18n.t.catalog.uninstalledSuccess, { name: deleteTarget.app_slug }),
+        res && 'job_id' in res ? res.job_id : undefined,
+      );
+      deleteTarget = null;
+      await loadInstalls();
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally {
+      deleting = false;
+    }
+  }
 </script>
 
 <div class="page-header">
@@ -154,40 +249,126 @@
   </button>
 </div>
 
+{#snippet appCard(app: CatalogApp)}
+  <article class="card catalog-card">
+    <div>
+      <div class="catalog-header">
+        <div>
+          <h2 class="catalog-title">{app.name}</h2>
+          <div class="catalog-meta">
+            <span>{app.category}</span>
+            <span>•</span>
+            <span class="mono">v{app.version}</span>
+          </div>
+        </div>
+        <span class="badge {app.type === 'php' ? 'badge-primary' : 'badge-info'}">
+          {app.type}
+        </span>
+      </div>
+      <p class="catalog-desc">{app.description}</p>
+    </div>
+    {#if canWrite}
+      <div class="catalog-footer">
+        <button type="button" class="btn btn-sm btn-primary" onclick={() => openInstall(app)}>
+          {i18n.t.catalog.install}
+        </button>
+      </div>
+    {/if}
+  </article>
+{/snippet}
+
 {#if loadingCatalog && catalog.length === 0}
   <div class="card empty-state">{i18n.t.common.loading}</div>
 {:else if catalog.length === 0}
   <div class="card empty-state">{i18n.t.common.noData}</div>
 {:else}
-  <div class="catalog-grid">
-    {#each catalog as app (app.slug)}
-      <article class="card catalog-card">
-        <div>
-          <div class="catalog-header">
-            <div>
-              <h2 class="catalog-title">{app.name}</h2>
-              <div class="catalog-meta">
-                <span>{app.category}</span>
-                <span>•</span>
-                <span class="mono">v{app.version}</span>
-              </div>
-            </div>
-            <span class="badge {app.type === 'php' ? 'badge-primary' : 'badge-info'}">
-              {app.type}
-            </span>
-          </div>
-          <p class="catalog-desc">{app.description}</p>
-        </div>
-        {#if canWrite}
-          <div class="catalog-footer">
-            <button type="button" class="btn btn-sm btn-primary" onclick={() => openInstall(app)}>
-              {i18n.t.catalog.install}
-            </button>
-          </div>
-        {/if}
-      </article>
-    {/each}
+  <div class="toolbar">
+    <div class="toolbar-filters" role="tablist">
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={typeFilter === 'all'}
+        onclick={() => (typeFilter = 'all')}
+      >
+        {i18n.t.catalog.filterAll}
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={typeFilter === 'php'}
+        onclick={() => (typeFilter = 'php')}
+      >
+        {i18n.t.catalog.filterPhp}
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={typeFilter === 'docker'}
+        onclick={() => (typeFilter = 'docker')}
+      >
+        {i18n.t.catalog.filterDocker}
+      </button>
+    </div>
+    <div class="toolbar-filters">
+      <input
+        type="search"
+        class="form-control"
+        bind:value={searchQuery}
+        placeholder={i18n.t.catalog.searchPlaceholder}
+        aria-label={i18n.t.catalog.searchPlaceholder}
+      />
+    </div>
   </div>
+
+  {#if typeFilter === 'all'}
+    {#if phpApps.length === 0 && dockerApps.length === 0}
+      <div class="card empty-state">{i18n.t.common.noData}</div>
+    {:else}
+      {#if phpApps.length > 0}
+        <h2 class="section-heading">
+          {i18n.t.catalog.phpSectionTitle}
+          <span class="badge badge-primary">{phpApps.length}</span>
+        </h2>
+        <div class="catalog-grid">
+          {#each phpApps as app (app.slug)}
+            {@render appCard(app)}
+          {/each}
+        </div>
+      {/if}
+
+      {#if dockerApps.length > 0}
+        <h2 class="section-heading">
+          {i18n.t.catalog.dockerSectionTitle}
+          <span class="badge badge-info">{dockerApps.length}</span>
+        </h2>
+        <div class="catalog-grid">
+          {#each dockerApps as app (app.slug)}
+            {@render appCard(app)}
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  {:else if typeFilter === 'php'}
+    {#if phpApps.length === 0}
+      <div class="card empty-state">{i18n.t.common.noData}</div>
+    {:else}
+      <div class="catalog-grid">
+        {#each phpApps as app (app.slug)}
+          {@render appCard(app)}
+        {/each}
+      </div>
+    {/if}
+  {:else}
+    {#if dockerApps.length === 0}
+      <div class="card empty-state">{i18n.t.common.noData}</div>
+    {:else}
+      <div class="catalog-grid">
+        {#each dockerApps as app (app.slug)}
+          {@render appCard(app)}
+        {/each}
+      </div>
+    {/if}
+  {/if}
 {/if}
 
 <h2 class="section-heading">{i18n.t.catalog.installedTitle}</h2>
@@ -200,13 +381,16 @@
         <th>{i18n.t.catalog.domain}</th>
         <th>{i18n.t.common.status}</th>
         <th>{i18n.t.common.createdAt}</th>
+        {#if canWrite}
+          <th>{i18n.t.common.actions}</th>
+        {/if}
       </tr>
     </thead>
     <tbody>
       {#if loadingInstalls && installs.length === 0}
-        <tr><td colspan="4" class="empty-state">{i18n.t.common.loading}</td></tr>
+        <tr><td colspan={canWrite ? 5 : 4} class="empty-state">{i18n.t.common.loading}</td></tr>
       {:else if installs.length === 0}
-        <tr><td colspan="4" class="empty-state">{i18n.t.common.noData}</td></tr>
+        <tr><td colspan={canWrite ? 5 : 4} class="empty-state">{i18n.t.common.noData}</td></tr>
       {:else}
         {#each installs as inst (inst.id)}
           <tr>
@@ -218,6 +402,40 @@
               </span>
             </td>
             <td>{formatDateTime(inst.created_at, i18n.locale === 'id' ? 'id-ID' : 'en-US')}</td>
+            {#if canWrite}
+              <td>
+                <div class="table-actions">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.common.edit}
+                    aria-label={i18n.t.common.edit}
+                    onclick={() => openEdit(inst)}
+                  >
+                    <ActionIcon name="edit" />
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.catalog.reinstall}
+                    aria-label={i18n.t.catalog.reinstall}
+                    disabled={reinstallingId === inst.id}
+                    onclick={() => handleReinstall(inst)}
+                  >
+                    <ActionIcon name="rebuild" />
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon btn-danger"
+                    title={i18n.t.common.delete}
+                    aria-label={i18n.t.common.delete}
+                    onclick={() => (deleteTarget = inst)}
+                  >
+                    <ActionIcon name="delete" />
+                  </button>
+                </div>
+              </td>
+            {/if}
           </tr>
         {/each}
       {/if}
@@ -294,6 +512,82 @@
       disabled={installing || domains.length === 0 || !fDomainId}
     >
       {installing ? i18n.t.common.loading : i18n.t.catalog.install}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={editTarget !== null}
+  title={editTarget ? fmt(i18n.t.catalog.editTitle, { name: editTarget.app_slug }) : ''}
+  onclose={() => (editTarget = null)}
+>
+  <form id="edit-install-form" onsubmit={submitEdit}>
+    {#if editError}
+      <div class="alert alert-danger" role="alert">{editError}</div>
+    {/if}
+
+    <div class="form-group">
+      <label class="form-label" for="edit-inst-domain">{i18n.t.catalog.domain}</label>
+      {#if domains.length === 0}
+        <div class="alert alert-warning">{i18n.t.catalog.noDomains}</div>
+      {:else}
+        <select id="edit-inst-domain" class="form-control" bind:value={editDomainId} required>
+          <option value="" disabled>{i18n.t.catalog.selectDomain}</option>
+          {#each domains as d (d.id)}
+            <option value={d.id}>{d.domain}</option>
+          {/each}
+        </select>
+      {/if}
+    </div>
+
+    <div class="form-group">
+      <label class="form-check">
+        <input type="checkbox" bind:checked={editReinstall} />
+        <span>{i18n.t.catalog.reinstallCheck}</span>
+      </label>
+    </div>
+  </form>
+
+  {#snippet footer()}
+    <button type="button" class="btn" onclick={() => (editTarget = null)} disabled={savingEdit}>
+      {i18n.t.common.cancel}
+    </button>
+    <button
+      type="submit"
+      form="edit-install-form"
+      class="btn btn-primary"
+      disabled={savingEdit || domains.length === 0 || !editDomainId}
+    >
+      {savingEdit ? i18n.t.common.loading : i18n.t.common.save}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={deleteTarget !== null}
+  title={i18n.t.catalog.uninstallTitle}
+  onclose={() => (deleteTarget = null)}
+>
+  {#if deleteTarget}
+    <p>
+      {fmt(i18n.t.catalog.uninstallBody, {
+        name: deleteTarget.app_slug,
+        domain: domainMap.get(deleteTarget.domain_id) ?? deleteTarget.domain_id,
+      })}
+    </p>
+  {/if}
+
+  {#snippet footer()}
+    <button type="button" class="btn" onclick={() => (deleteTarget = null)} disabled={deleting}>
+      {i18n.t.common.cancel}
+    </button>
+    <button
+      type="button"
+      class="btn btn-danger"
+      onclick={confirmDelete}
+      disabled={deleting}
+    >
+      {deleting ? i18n.t.common.loading : i18n.t.common.delete}
     </button>
   {/snippet}
 </Modal>

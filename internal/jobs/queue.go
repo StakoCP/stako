@@ -138,6 +138,8 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdDockerCompose
 	case "catalog.install":
 		cmd = agentproto.CmdCatalogInstall
+	case "catalog.uninstall":
+		cmd = agentproto.CmdCatalogUninstall
 	case "redis.create":
 		cmd = agentproto.CmdRedisCreate
 	case "redis.delete":

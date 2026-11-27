@@ -289,6 +289,44 @@ func (s *Store) ListAppInstalls(ctx context.Context, userID, resellerID *string)
 	return out, rows.Err()
 }
 
+func (s *Store) GetAppInstall(ctx context.Context, id string) (*AppInstall, error) {
+	var ai AppInstall
+	var createdAt string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, user_id, domain_id, app_slug, status, created_at FROM app_installs WHERE id=?`, id,
+	).Scan(&ai.ID, &ai.UserID, &ai.DomainID, &ai.AppSlug, &ai.Status, &createdAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	ai.CreatedAt = parseTime(createdAt)
+	return &ai, nil
+}
+
+func (s *Store) UpdateAppInstall(ctx context.Context, id, domainID, status string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE app_installs SET domain_id=?, status=? WHERE id=?`, domainID, status, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteAppInstall(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM app_installs WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- Redis & RabbitMQ ---
 
 func (s *Store) NextFreeRedisPort(ctx context.Context) (int, error) {

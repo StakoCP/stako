@@ -193,6 +193,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/catalog", s.requireAuth(s.handleListCatalog))
 	mux.HandleFunc("GET /api/v1/catalog/installs", s.requireAuth(s.handleListAppInstalls))
 	mux.HandleFunc("POST /api/v1/catalog/install", s.requireAuth(s.handleInstallCatalogApp))
+	mux.HandleFunc("PATCH /api/v1/catalog/installs/{id}", s.requireAuth(s.handleUpdateAppInstall))
+	mux.HandleFunc("DELETE /api/v1/catalog/installs/{id}", s.requireAuth(s.handleDeleteAppInstall))
 
 	// Redis & RabbitMQ (7.9)
 	mux.HandleFunc("GET /api/v1/services/redis", s.requireAuth(s.handleListRedis))

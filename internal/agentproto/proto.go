@@ -45,6 +45,7 @@ const (
 	CmdDockerLogs      = "docker.logs"
 	CmdDockerCompose   = "docker.compose"
 	CmdCatalogInstall  = "catalog.install"
+	CmdCatalogUninstall = "catalog.uninstall"
 	CmdRedisCreate     = "redis.create"
 	CmdRedisDelete     = "redis.delete"
 	CmdRabbitCreate    = "rabbitmq.create"

@@ -482,6 +482,109 @@ func (s *Server) handleInstallCatalogApp(w http.ResponseWriter, r *http.Request)
 	WriteJSON(w, http.StatusCreated, map[string]any{"install": ai, "job_id": jobID})
 }
 
+func (s *Server) handleUpdateAppInstall(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	ai, err := s.store.GetAppInstall(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, ai.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		DomainID  string `json:"domain_id"`
+		Reinstall bool   `json:"reinstall"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	domID := ai.DomainID
+	if strings.TrimSpace(req.DomainID) != "" {
+		domID = strings.TrimSpace(req.DomainID)
+	}
+	dom, err := s.store.GetDomain(r.Context(), domID)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, dom.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden domain", "")
+		return
+	}
+	if err := s.store.UpdateAppInstall(r.Context(), ai.ID, dom.ID, "installed"); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	var jobID *string
+	if req.Reinstall || dom.ID != ai.DomainID {
+		s.syncPluginCatalog(r.Context())
+		appDef, _ := catalog.Find(ai.AppSlug)
+		owner, _ := s.store.GetUserByID(r.Context(), dom.UserID)
+		uname := ac.User.Username
+		if owner != nil {
+			uname = owner.Username
+		}
+		if j, err := s.jobs.Enqueue(r.Context(), "catalog.install", ac.User.ID, map[string]any{
+			"app_slug":     ai.AppSlug,
+			"app_type":     appDef.Type,
+			"image":        appDef.Image,
+			"repo_url":     appDef.RepoURL,
+			"cmd_args":     appDef.CmdArgs,
+			"default_port": appDef.DefaultPort,
+			"domain":       dom.Domain,
+			"username":     uname,
+			"docroot":      dom.Docroot,
+		}); err == nil {
+			jobID = &j.ID
+		}
+	}
+	ai.DomainID = dom.ID
+	ai.Status = "installed"
+	s.audit(r, ac.User, "catalog.update", "app_install", ai.ID, "success", map[string]any{"domain": dom.Domain, "reinstall": req.Reinstall})
+	WriteJSON(w, http.StatusOK, map[string]any{"install": ai, "job_id": jobID})
+}
+
+func (s *Server) handleDeleteAppInstall(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	ai, err := s.store.GetAppInstall(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, ai.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	s.syncPluginCatalog(r.Context())
+	appDef, _ := catalog.Find(ai.AppSlug)
+	domName := ai.DomainID
+	if dom, err := s.store.GetDomain(r.Context(), ai.DomainID); err == nil {
+		domName = dom.Domain
+	}
+	_, _ = s.jobs.Enqueue(r.Context(), "catalog.uninstall", ac.User.ID, map[string]any{
+		"app_slug": ai.AppSlug,
+		"app_type": appDef.Type,
+		"domain":   domName,
+	})
+	if err := s.store.DeleteAppInstall(r.Context(), ai.ID); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	s.audit(r, ac.User, "catalog.uninstall", "app_install", ai.ID, "success", map[string]any{"app": ai.AppSlug, "domain": domName})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- Redis & RabbitMQ (7.9) ---
 
 func (s *Server) handleListRedis(w http.ResponseWriter, r *http.Request) {

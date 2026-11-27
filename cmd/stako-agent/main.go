@@ -1068,6 +1068,18 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 		}
 		return r
 
+	case agentproto.CmdCatalogUninstall:
+		slug, _ := req.Args["app_slug"].(string)
+		domain, _ := req.Args["domain"].(string)
+		appType, _ := req.Args["app_type"].(string)
+		if appType == "docker" && domain != "" {
+			cname := "stako-" + slug + "-" + strings.ReplaceAll(domain, ".", "-")
+			return runExec(resp, dryRun, logger, "docker", "rm", "-f", cname)
+		}
+		resp.OK = true
+		resp.Output = "uninstalled " + slug + " from " + domain
+		return resp
+
 	case agentproto.CmdRedisCreate:
 		name, _ := req.Args["name"].(string)
 		port := 6380
