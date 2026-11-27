@@ -3,6 +3,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
@@ -320,12 +322,67 @@ func (s *Server) handleCreateFTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var jobID *string
 	if j, err := s.jobs.Enqueue(r.Context(), "ftp.create", ac.User.ID, map[string]any{
-		"username": f.Username, "home_dir": f.HomeDir, "protocol": f.Protocol,
+		"username": f.Username, "password": req.Password, "home_dir": f.HomeDir, "protocol": f.Protocol, "quota_mb": f.QuotaMB,
 	}); err == nil {
 		jobID = &j.ID
 	}
 	s.audit(r, ac.User, "ftp.create", "ftp", f.ID, "success", map[string]any{"username": f.Username})
 	WriteJSON(w, http.StatusCreated, map[string]any{"ftp": f, "job_id": jobID})
+}
+
+func (s *Server) handleUpdateFTP(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	f, err := s.store.GetFtpAccount(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, f.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+		HomeDir  string `json:"home_dir"`
+		QuotaMB  int    `json:"quota_mb"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	if req.Password != "" {
+		if err := crypto.ValidatePasswordStrength(req.Password); err != nil {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Weak password", err.Error(),
+				FieldError{Field: "password", Message: err.Error()})
+			return
+		}
+	}
+	homeDir := strings.TrimSpace(req.HomeDir)
+	if homeDir == "" {
+		homeDir = f.HomeDir
+	}
+	quotaMB := req.QuotaMB
+	if quotaMB <= 0 {
+		quotaMB = f.QuotaMB
+	}
+	if err := s.store.UpdateFtpAccount(r.Context(), f.ID, homeDir, quotaMB); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	f.HomeDir = homeDir
+	f.QuotaMB = quotaMB
+	var jobID *string
+	if j, err := s.jobs.Enqueue(r.Context(), "ftp.update", ac.User.ID, map[string]any{
+		"username": f.Username, "password": req.Password, "home_dir": f.HomeDir, "protocol": f.Protocol, "quota_mb": f.QuotaMB,
+	}); err == nil {
+		jobID = &j.ID
+	}
+	s.audit(r, ac.User, "ftp.update", "ftp", f.ID, "success", map[string]any{"username": f.Username})
+	WriteJSON(w, http.StatusOK, map[string]any{"ftp": f, "job_id": jobID})
 }
 
 func (s *Server) handleDeleteFTP(w http.ResponseWriter, r *http.Request) {
@@ -353,6 +410,118 @@ func (s *Server) handleDeleteFTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, ac.User, "ftp.delete", "ftp", f.ID, "success", map[string]any{"username": f.Username})
 	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
+}
+
+// --- SSH Keys (7.8) ---
+
+func (s *Server) syncUserSSHKeys(ctx context.Context, user *store.User) {
+	if s.agent == nil || user == nil {
+		return
+	}
+	keys, err := s.store.ListSSHKeys(ctx, &user.ID)
+	if err != nil {
+		return
+	}
+	pubKeys := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pubKeys = append(pubKeys, k.PublicKey)
+	}
+	_, _ = s.agent.Call(ctx, agentproto.CmdSSHKeySync, map[string]any{
+		"username": user.Username,
+		"keys":     pubKeys,
+	})
+}
+
+func (s *Server) handleListSSHKeys(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	var userFilter *string
+	if ac.User.Role != "admin" {
+		userFilter = &ac.User.ID
+	}
+	items, err := s.store.ListSSHKeys(r.Context(), userFilter)
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleCreateSSHKey(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Label     string  `json:"label"`
+		PublicKey string  `json:"public_key"`
+		UserID    *string `json:"user_id"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	req.Label = strings.TrimSpace(req.Label)
+	req.PublicKey = strings.TrimSpace(req.PublicKey)
+	if req.Label == "" || req.PublicKey == "" || strings.ContainsAny(req.PublicKey, "\r\n") {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "label and single-line public_key are required", "")
+		return
+	}
+	parts := strings.Fields(req.PublicKey)
+	if len(parts) < 2 || (!strings.HasPrefix(parts[0], "ssh-") && !strings.HasPrefix(parts[0], "ecdsa-")) {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid OpenSSH public key format", "")
+		return
+	}
+	rawKey, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid base64 in public key", "")
+		return
+	}
+	sum := sha256.Sum256(rawKey)
+	fp := "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+
+	owner, ok := s.resolveTargetUser(r, ac, req.UserID)
+	if !ok {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden target user", "")
+		return
+	}
+	id, _ := crypto.RandomID("ssh")
+	k := &store.SSHKey{
+		ID: id, UserID: owner.ID, Label: req.Label, PublicKey: req.PublicKey, Fingerprint: fp,
+	}
+	if err := s.store.CreateSSHKey(r.Context(), k); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	s.syncUserSSHKeys(r.Context(), owner)
+	s.audit(r, ac.User, "ssh_key.create", "ssh_key", k.ID, "success", map[string]any{"label": k.Label, "fingerprint": k.Fingerprint})
+	WriteJSON(w, http.StatusCreated, k)
+}
+
+func (s *Server) handleDeleteSSHKey(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	k, err := s.store.GetSSHKey(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, k.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	if err := s.store.DeleteSSHKey(r.Context(), k.ID); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if owner, err := s.store.GetUserByID(r.Context(), k.UserID); err == nil {
+		s.syncUserSSHKeys(r.Context(), owner)
+	}
+	s.audit(r, ac.User, "ssh_key.delete", "ssh_key", k.ID, "success", nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Firewall & Bans (7.10) ---

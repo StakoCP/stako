@@ -2,7 +2,10 @@
 package api
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -769,15 +772,108 @@ func (s *Server) handleIssueSSL(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
 		return
 	}
+	var req struct {
+		Challenge   string `json:"challenge"`
+		Wildcard    bool   `json:"wildcard"`
+		DNSProvider string `json:"dns_provider"`
+	}
+	if r.Body != nil {
+		_ = DecodeJSON(r, &req)
+	}
+	challenge := strings.TrimSpace(req.Challenge)
+	if challenge == "" {
+		challenge = "http-01"
+	}
+	if challenge != "http-01" && challenge != "dns-01" {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Challenge must be http-01 or dns-01", "")
+		return
+	}
 	d.SSLEnabled = true
-	d.SSLMode = "letsencrypt"
+	if challenge == "dns-01" {
+		d.SSLMode = "letsencrypt-dns01"
+	} else {
+		d.SSLMode = "letsencrypt"
+	}
 	_ = s.store.UpdateDomain(r.Context(), d)
 	var jobID *string
-	if j, err := s.jobs.Enqueue(r.Context(), "ssl.issue", ac.User.ID, map[string]any{"domain": d.Domain}); err == nil {
+	if j, err := s.jobs.Enqueue(r.Context(), "ssl.issue", ac.User.ID, map[string]any{
+		"domain": d.Domain, "challenge": challenge, "wildcard": req.Wildcard, "dns_provider": strings.TrimSpace(req.DNSProvider),
+	}); err == nil {
 		jobID = &j.ID
 	}
-	s.audit(r, ac.User, "domain.ssl_issue", "domain", d.ID, "success", nil)
-	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
+	s.audit(r, ac.User, "domain.ssl_issue", "domain", d.ID, "success", map[string]any{"challenge": challenge, "wildcard": req.Wildcard})
+	WriteJSON(w, http.StatusOK, map[string]any{"job_id": jobID, "ssl_mode": d.SSLMode})
+}
+
+func (s *Server) handleUploadCustomSSL(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	d, err := s.store.GetDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, d.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		CertificatePEM string `json:"certificate_pem"`
+		PrivateKeyPEM  string `json:"private_key_pem"`
+		ChainPEM       string `json:"chain_pem"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	fullchain := strings.TrimSpace(req.CertificatePEM)
+	if chain := strings.TrimSpace(req.ChainPEM); chain != "" {
+		fullchain += "\n" + chain
+	}
+	keyPEM := strings.TrimSpace(req.PrivateKeyPEM)
+	if fullchain == "" || keyPEM == "" {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "certificate_pem and private_key_pem are required", "")
+		return
+	}
+	pair, err := tls.X509KeyPair([]byte(fullchain), []byte(keyPEM))
+	if err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Invalid certificate or private key", err.Error())
+		return
+	}
+	var subject, issuer, notAfter string
+	if len(pair.Certificate) > 0 {
+		if leaf, err := x509.ParseCertificate(pair.Certificate[0]); err == nil {
+			subject = leaf.Subject.CommonName
+			issuer = leaf.Issuer.CommonName
+			notAfter = leaf.NotAfter.UTC().Format("2006-01-02T15:04:05Z")
+		}
+	} else if block, _ := pem.Decode([]byte(fullchain)); block != nil {
+		if leaf, err := x509.ParseCertificate(block.Bytes); err == nil {
+			subject = leaf.Subject.CommonName
+			issuer = leaf.Issuer.CommonName
+			notAfter = leaf.NotAfter.UTC().Format("2006-01-02T15:04:05Z")
+		}
+	}
+	d.SSLEnabled = true
+	d.SSLMode = "custom"
+	_ = s.store.UpdateDomain(r.Context(), d)
+	var jobID *string
+	if j, err := s.jobs.Enqueue(r.Context(), "ssl.custom", ac.User.ID, map[string]any{
+		"domain": d.Domain, "fullchain_pem": fullchain + "\n", "privkey_pem": keyPEM + "\n",
+	}); err == nil {
+		jobID = &j.ID
+	}
+	s.audit(r, ac.User, "domain.ssl_custom", "domain", d.ID, "success", map[string]any{"subject": subject, "not_after": notAfter})
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"job_id":    jobID,
+		"ssl_mode":  d.SSLMode,
+		"subject":   subject,
+		"issuer":    issuer,
+		"not_after": notAfter,
+	})
 }
 
 func (s *Server) handleListProxyRules(w http.ResponseWriter, r *http.Request) {

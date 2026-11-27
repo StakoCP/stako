@@ -73,6 +73,19 @@
   let deleteTarget = $state<Domain | null>(null);
   let deleting = $state(false);
 
+  // SSL modal
+  let sslModalDomain = $state<Domain | null>(null);
+  let sslTab = $state<'letsencrypt' | 'custom'>('letsencrypt');
+  let sslChallenge = $state<'http-01' | 'dns-01'>('http-01');
+  let sslWildcard = $state(false);
+  let sslDnsProvider = $state<'manual' | 'cloudflare'>('manual');
+  let sslCertPem = $state('');
+  let sslKeyPem = $state('');
+  let sslChainPem = $state('');
+  let sslSaving = $state(false);
+  let sslError = $state('');
+  let sslCustomResult = $state<{ subject: string; not_after: string } | null>(null);
+
   // Domain logs modal
   let logsModalDomain = $state<Domain | null>(null);
   let logsType = $state<'access' | 'error' | 'goaccess'>('access');
@@ -345,15 +358,73 @@
     }
   }
 
-  async function issueSsl(d: Domain) {
+  function openSslModal(d: Domain) {
+    sslModalDomain = d;
+    sslTab = d.ssl_mode === 'custom' ? 'custom' : 'letsencrypt';
+    sslChallenge = 'http-01';
+    sslWildcard = false;
+    sslDnsProvider = 'manual';
+    sslCertPem = '';
+    sslKeyPem = '';
+    sslChainPem = '';
+    sslError = '';
+    sslCustomResult = null;
+  }
+
+  async function submitSslLetsEncrypt(e: SubmitEvent) {
+    e.preventDefault();
+    if (!sslModalDomain) return;
+    sslError = '';
+    sslSaving = true;
     try {
-      const res = await api.post<{ job_id: string }>(`/domains/${d.id}/ssl`, {
-        mode: 'letsencrypt',
-      });
+      const body: Record<string, unknown> = {
+        challenge: sslChallenge,
+      };
+      if (sslChallenge === 'dns-01') {
+        body.wildcard = sslWildcard;
+        body.dns_provider = sslDnsProvider;
+      }
+      const res = await api.post<{ job_id: string }>(`/domains/${sslModalDomain.id}/ssl`, body);
       notifyJob(i18n.t.domains.sslIssuedSuccess, res.job_id);
+      sslModalDomain = null;
       await loadDomains();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+      sslError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      sslSaving = false;
+    }
+  }
+
+  async function submitSslCustom(e: SubmitEvent) {
+    e.preventDefault();
+    if (!sslModalDomain) return;
+    sslError = '';
+    sslCustomResult = null;
+    sslSaving = true;
+    try {
+      const res = await api.post<{
+        job_id?: string | null;
+        subject?: string;
+        not_after?: string;
+      }>(`/domains/${sslModalDomain.id}/ssl/custom`, {
+        certificate_pem: sslCertPem.trim(),
+        private_key_pem: sslKeyPem.trim(),
+        chain_pem: sslChainPem.trim(),
+      });
+      notifyJob(i18n.t.domains.ssl_custom_saved, res.job_id);
+      if (res.subject || res.not_after) {
+        sslCustomResult = {
+          subject: res.subject || sslModalDomain.domain,
+          not_after: res.not_after || '',
+        };
+      } else {
+        sslModalDomain = null;
+      }
+      await loadDomains();
+    } catch (err) {
+      sslError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      sslSaving = false;
     }
   }
 
@@ -661,7 +732,7 @@
                     class="btn btn-sm btn-icon"
                     title={i18n.t.domains.issueSsl}
                     aria-label={i18n.t.domains.issueSsl}
-                    onclick={() => issueSsl(d)}
+                    onclick={() => openSslModal(d)}
                   >
                     <ActionIcon name="ssl" />
                   </button>
@@ -1306,5 +1377,127 @@
     <button type="button" class="btn" onclick={() => (cacheModalDomain = null)}>
       {i18n.t.common.close}
     </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={sslModalDomain !== null}
+  title={sslModalDomain ? fmt(i18n.t.domains.ssl_issue_title, { domain: sslModalDomain.domain }) : ''}
+  onclose={() => (sslModalDomain = null)}
+>
+  {#if sslModalDomain}
+    <div class="tabs mb-4">
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={sslTab === 'letsencrypt'}
+        onclick={() => {
+          sslTab = 'letsencrypt';
+          sslError = '';
+        }}
+      >
+        {i18n.t.domains.sslLetsEncrypt}
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={sslTab === 'custom'}
+        onclick={() => {
+          sslTab = 'custom';
+          sslError = '';
+        }}
+      >
+        {i18n.t.domains.ssl_custom}
+      </button>
+    </div>
+
+    {#if sslError}
+      <div class="alert alert-danger" role="alert">{sslError}</div>
+    {/if}
+
+    {#if sslTab === 'letsencrypt'}
+      <form id="ssl-le-form" onsubmit={submitSslLetsEncrypt}>
+        <div class="form-group">
+          <label class="form-label" for="ssl-challenge">{i18n.t.domains.ssl_challenge}</label>
+          <select id="ssl-challenge" class="form-control" bind:value={sslChallenge}>
+            <option value="http-01">HTTP-01</option>
+            <option value="dns-01">DNS-01</option>
+          </select>
+        </div>
+
+        {#if sslChallenge === 'dns-01'}
+          <div class="form-group">
+            <label class="checkbox-row">
+              <input type="checkbox" bind:checked={sslWildcard} />
+              <span>{fmt(i18n.t.domains.ssl_wildcard, { domain: sslModalDomain.domain })}</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ssl-dns-provider">{i18n.t.domains.ssl_dns_provider}</label>
+            <select id="ssl-dns-provider" class="form-control" bind:value={sslDnsProvider}>
+              <option value="manual">Manual</option>
+              <option value="cloudflare">Cloudflare</option>
+            </select>
+          </div>
+        {/if}
+      </form>
+    {:else}
+      {#if sslCustomResult}
+        <div class="alert alert-success" role="status">
+          <div><strong>{sslCustomResult.subject}</strong></div>
+          {#if sslCustomResult.not_after}
+            <div class="mono">{sslCustomResult.not_after}</div>
+          {/if}
+        </div>
+      {/if}
+      <form id="ssl-custom-form" onsubmit={submitSslCustom}>
+        <div class="form-group">
+          <label class="form-label" for="ssl-cert-pem">{i18n.t.domains.ssl_cert_pem}</label>
+          <textarea
+            id="ssl-cert-pem"
+            class="form-control mono"
+            rows="4"
+            bind:value={sslCertPem}
+            required
+            placeholder="-----BEGIN CERTIFICATE-----"
+          ></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ssl-key-pem">{i18n.t.domains.ssl_key_pem}</label>
+          <textarea
+            id="ssl-key-pem"
+            class="form-control mono"
+            rows="4"
+            bind:value={sslKeyPem}
+            required
+            placeholder="-----BEGIN PRIVATE KEY-----"
+          ></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ssl-chain-pem">{i18n.t.domains.ssl_chain_pem}</label>
+          <textarea
+            id="ssl-chain-pem"
+            class="form-control mono"
+            rows="3"
+            bind:value={sslChainPem}
+            placeholder="-----BEGIN CERTIFICATE-----"
+          ></textarea>
+        </div>
+      </form>
+    {/if}
+  {/if}
+  {#snippet footer()}
+    <button type="button" class="btn" onclick={() => (sslModalDomain = null)} disabled={sslSaving}>
+      {i18n.t.common.close}
+    </button>
+    {#if sslTab === 'letsencrypt'}
+      <button type="submit" form="ssl-le-form" class="btn btn-primary" disabled={sslSaving}>
+        {sslSaving ? i18n.t.common.loading : i18n.t.domains.issueSsl}
+      </button>
+    {:else}
+      <button type="submit" form="ssl-custom-form" class="btn btn-primary" disabled={sslSaving}>
+        {sslSaving ? i18n.t.common.loading : i18n.t.common.save}
+      </button>
+    {/if}
   {/snippet}
 </Modal>

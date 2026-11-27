@@ -110,6 +110,8 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdDomainDelete
 	case "ssl.issue":
 		cmd = agentproto.CmdSSLIssue
+	case "ssl.custom":
+		cmd = agentproto.CmdSSLCustom
 	case "app.deploy":
 		cmd = agentproto.CmdAppDeploy
 	case "app.start", "app.stop", "app.restart", "app.delete":
@@ -122,6 +124,8 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdDBBackup
 	case "ftp.create":
 		cmd = agentproto.CmdFTPCreate
+	case "ftp.update":
+		cmd = agentproto.CmdFTPUpdate
 	case "ftp.delete":
 		cmd = agentproto.CmdFTPDelete
 	case "firewall.apply":

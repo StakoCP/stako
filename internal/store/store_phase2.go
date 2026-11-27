@@ -32,6 +32,14 @@ func (s *Store) migratePhase2() error {
 		protocol TEXT NOT NULL DEFAULT 'sftp',
 		created_at TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS ssh_keys (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		label TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		fingerprint TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
 	CREATE TABLE IF NOT EXISTS firewall_rules (
 		id TEXT PRIMARY KEY,
 		action TEXT NOT NULL,
@@ -225,6 +233,82 @@ func (s *Store) ListFtpAccounts(ctx context.Context, userID, resellerID *string)
 
 func (s *Store) DeleteFtpAccount(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM ftp_accounts WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateFtpAccount(ctx context.Context, id, homeDir string, quotaMB int) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE ftp_accounts SET home_dir=?, quota_mb=? WHERE id=?`, homeDir, quotaMB, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// --- SSH Keys ---
+
+func (s *Store) CreateSSHKey(ctx context.Context, k *SSHKey) error {
+	if k.CreatedAt.IsZero() {
+		k.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO ssh_keys (id, user_id, label, public_key, fingerprint, created_at) VALUES (?,?,?,?,?,?)`,
+		k.ID, k.UserID, k.Label, k.PublicKey, k.Fingerprint, formatTime(k.CreatedAt),
+	)
+	return err
+}
+
+func (s *Store) GetSSHKey(ctx context.Context, id string) (*SSHKey, error) {
+	var k SSHKey
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_id, label, public_key, fingerprint, created_at FROM ssh_keys WHERE id=?`, id).
+		Scan(&k.ID, &k.UserID, &k.Label, &k.PublicKey, &k.Fingerprint, &createdAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	k.CreatedAt = parseTime(createdAt)
+	return &k, nil
+}
+
+func (s *Store) ListSSHKeys(ctx context.Context, userID *string) ([]SSHKey, error) {
+	q := `SELECT id, user_id, label, public_key, fingerprint, created_at FROM ssh_keys`
+	var args []any
+	if userID != nil {
+		q += ` WHERE user_id=?`
+		args = append(args, *userID)
+	}
+	q += ` ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SSHKey{}
+	for rows.Next() {
+		var k SSHKey
+		var createdAt string
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Label, &k.PublicKey, &k.Fingerprint, &createdAt); err != nil {
+			return nil, err
+		}
+		k.CreatedAt = parseTime(createdAt)
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteSSHKey(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM ssh_keys WHERE id=?`, id)
 	if err != nil {
 		return err
 	}

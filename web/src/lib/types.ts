@@ -303,6 +303,15 @@ export interface FtpAccount {
   created_at: string;
 }
 
+export interface SSHKey {
+  id: string;
+  user_id: string;
+  label: string;
+  public_key: string;
+  fingerprint: string;
+  created_at: string;
+}
+
 export type FirewallAction = 'allow' | 'deny';
 export type FirewallProtocol = 'tcp' | 'udp' | 'any';
 

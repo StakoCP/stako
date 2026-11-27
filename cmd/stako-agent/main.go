@@ -600,11 +600,63 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 
 	case agentproto.CmdSSLIssue:
 		domain, _ := req.Args["domain"].(string)
+		challenge, _ := req.Args["challenge"].(string)
+		wildcard, _ := req.Args["wildcard"].(bool)
+		dnsProvider, _ := req.Args["dns_provider"].(string)
 		if err := agentproto.ValidateDomain(domain); err != nil {
 			resp.Error = err.Error()
 			return resp
 		}
-		return runExec(resp, dryRun, logger, "certbot", "certonly", "--webroot", "-w", "/var/www/acme", "-d", domain, "--non-interactive", "--agree-tos")
+		args := []string{"certonly"}
+		if challenge == "dns-01" {
+			if dnsProvider == "cloudflare" {
+				args = append(args, "--dns-cloudflare", "--dns-cloudflare-credentials", "/etc/stako/cloudflare.ini")
+			} else {
+				args = append(args, "--manual", "--preferred-challenges", "dns")
+			}
+			args = append(args, "-d", domain)
+			if wildcard {
+				args = append(args, "-d", "*."+domain)
+			}
+		} else {
+			args = append(args, "--webroot", "-w", "/var/www/acme", "-d", domain)
+		}
+		args = append(args, "--non-interactive", "--agree-tos")
+		return runExec(resp, dryRun, logger, "certbot", args...)
+
+	case agentproto.CmdSSLCustom:
+		domain, _ := req.Args["domain"].(string)
+		fullchain, _ := req.Args["fullchain_pem"].(string)
+		privkey, _ := req.Args["privkey_pem"].(string)
+		if err := agentproto.ValidateDomain(domain); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if fullchain == "" || privkey == "" {
+			resp.Error = "fullchain_pem and privkey_pem are required"
+			return resp
+		}
+		sslDir := "/etc/stako/ssl/" + domain
+		if dryRun {
+			return runExec(resp, true, logger, "nginx", "-t")
+		}
+		if err := os.MkdirAll(sslDir, 0o750); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if err := os.WriteFile(sslDir+"/fullchain.pem", []byte(fullchain), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if err := os.WriteFile(sslDir+"/privkey.pem", []byte(privkey), 0o600); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		_ = exec.Command("systemctl", "reload", "nginx").Run()
+		_ = exec.Command("systemctl", "reload", "apache2").Run()
+		resp.OK = true
+		resp.Data = map[string]any{"ssl_dir": sslDir}
+		return resp
 
 	case agentproto.CmdAppDeploy:
 		appID, _ := req.Args["app_id"].(string)
@@ -875,12 +927,70 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 
 	case agentproto.CmdFTPCreate:
 		username, _ := req.Args["username"].(string)
+		password, _ := req.Args["password"].(string)
 		homeDir, _ := req.Args["home_dir"].(string)
+		protocol, _ := req.Args["protocol"].(string)
 		if err := agentproto.ValidateLinuxUsername(username); err != nil {
 			resp.Error = err.Error()
 			return resp
 		}
-		return runExec(resp, dryRun, logger, "useradd", "-d", homeDir, "-s", "/usr/sbin/nologin", username)
+		if dryRun {
+			return runExec(resp, true, logger, "useradd", "-d", homeDir, "-s", "/usr/sbin/nologin", username)
+		}
+		_ = os.MkdirAll(homeDir, 0o755)
+		r := runExec(resp, false, logger, "useradd", "-d", homeDir, "-s", "/usr/sbin/nologin", username)
+		if !r.OK {
+			return r
+		}
+		if password != "" {
+			cmd := exec.Command("chpasswd")
+			cmd.Stdin = strings.NewReader(username + ":" + password + "\n")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				resp.Error = fmt.Sprintf("chpasswd: %v: %s", err, strings.TrimSpace(string(out)))
+				return resp
+			}
+		}
+		if protocol == "sftp" {
+			_ = os.MkdirAll("/etc/ssh/sshd_config.d", 0o755)
+			conf := fmt.Sprintf("Match User %s\n\tChrootDirectory %s\n\tForceCommand internal-sftp\n\tAllowTcpForwarding no\n\tX11Forwarding no\n", username, homeDir)
+			_ = os.WriteFile("/etc/ssh/sshd_config.d/stako-sftp-"+username+".conf", []byte(conf), 0o644)
+			_ = exec.Command("systemctl", "reload", "sshd").Run()
+		}
+		resp.OK = true
+		return resp
+
+	case agentproto.CmdFTPUpdate:
+		username, _ := req.Args["username"].(string)
+		password, _ := req.Args["password"].(string)
+		homeDir, _ := req.Args["home_dir"].(string)
+		protocol, _ := req.Args["protocol"].(string)
+		if err := agentproto.ValidateLinuxUsername(username); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "usermod", "-d", homeDir, username)
+		}
+		if homeDir != "" {
+			_ = os.MkdirAll(homeDir, 0o755)
+			_ = exec.Command("usermod", "-d", homeDir, username).Run()
+		}
+		if password != "" {
+			cmd := exec.Command("chpasswd")
+			cmd.Stdin = strings.NewReader(username + ":" + password + "\n")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				resp.Error = fmt.Sprintf("chpasswd: %v: %s", err, strings.TrimSpace(string(out)))
+				return resp
+			}
+		}
+		if protocol == "sftp" && homeDir != "" {
+			_ = os.MkdirAll("/etc/ssh/sshd_config.d", 0o755)
+			conf := fmt.Sprintf("Match User %s\n\tChrootDirectory %s\n\tForceCommand internal-sftp\n\tAllowTcpForwarding no\n\tX11Forwarding no\n", username, homeDir)
+			_ = os.WriteFile("/etc/ssh/sshd_config.d/stako-sftp-"+username+".conf", []byte(conf), 0o644)
+			_ = exec.Command("systemctl", "reload", "sshd").Run()
+		}
+		resp.OK = true
+		return resp
 
 	case agentproto.CmdFTPDelete:
 		username, _ := req.Args["username"].(string)
@@ -888,7 +998,49 @@ func dispatch(req agentproto.Request, dryRun bool, logger *slog.Logger) agentpro
 			resp.Error = err.Error()
 			return resp
 		}
+		_ = os.Remove("/etc/ssh/sshd_config.d/stako-sftp-" + username + ".conf")
+		_ = exec.Command("systemctl", "reload", "sshd").Run()
 		return runExec(resp, dryRun, logger, "userdel", username)
+
+	case agentproto.CmdSSHKeySync:
+		username, _ := req.Args["username"].(string)
+		if err := agentproto.ValidateLinuxUsername(username); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		var lines []string
+		if rawKeys, ok := req.Args["keys"].([]any); ok {
+			for _, k := range rawKeys {
+				if ks, ok := k.(string); ok && ks != "" && !strings.ContainsAny(ks, "\r\n") {
+					lines = append(lines, ks)
+				}
+			}
+		}
+		sshDir := "/home/" + username + "/.ssh"
+		if username == "root" {
+			sshDir = "/root/.ssh"
+		}
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{"path": sshDir + "/authorized_keys", "count": len(lines)}
+			return resp
+		}
+		if err := os.MkdirAll(sshDir, 0o700); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		content := strings.Join(lines, "\n")
+		if content != "" {
+			content += "\n"
+		}
+		if err := os.WriteFile(sshDir+"/authorized_keys", []byte(content), 0o600); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		_ = exec.Command("chown", "-R", username+":"+username, sshDir).Run()
+		resp.OK = true
+		resp.Data = map[string]any{"count": len(lines)}
+		return resp
 
 	case agentproto.CmdFirewallApply:
 		ruleset, _ := req.Args["ruleset"].(string)

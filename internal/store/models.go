@@ -156,6 +156,15 @@ type FtpAccount struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type SSHKey struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Label       string    `json:"label"`
+	PublicKey   string    `json:"public_key"`
+	Fingerprint string    `json:"fingerprint"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type FirewallRule struct {
 	ID         string    `json:"id"`
 	Action     string    `json:"action"`

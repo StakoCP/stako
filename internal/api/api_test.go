@@ -4,13 +4,21 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/StakoCP/stako/internal/agentclient"
 	"github.com/StakoCP/stako/internal/crypto"
@@ -1680,6 +1688,115 @@ func TestFirewallIPv6Egress25DBRestoreRotateAndMailAliasesQueue(t *testing.T) {
 	rec = doReq(t, h, "POST", "/api/v1/mail/queue/flush", nil, cookies, csrf)
 	if rec.Code != 200 {
 		t.Fatalf("flush mail queue = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}
+
+func TestFTPUpdateSSHKeysAndSSLDNS01Custom(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// 1. FTP create & update
+	rec = doReq(t, h, "POST", "/api/v1/ftp", map[string]any{
+		"username": "sftp_demo", "password": "Strong-FTP-Pass-123!", "protocol": "sftp", "quota_mb": 512,
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create ftp = %d: %s", rec.Code, rec.Body.String())
+	}
+	var ftpResp struct {
+		FTP struct {
+			ID string `json:"id"`
+		} `json:"ftp"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &ftpResp)
+
+	rec = doReq(t, h, "PATCH", "/api/v1/ftp/"+ftpResp.FTP.ID, map[string]any{
+		"password": "Rotated-FTP-Pass-456!", "quota_mb": 2048,
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"quota_mb":2048`)) {
+		t.Fatalf("update ftp = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 2. SSH Keys CRUD
+	rec = doReq(t, h, "POST", "/api/v1/ssh-keys", map[string]any{
+		"label":      "workstation",
+		"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl test@stako",
+	}, cookies, csrf)
+	if rec.Code != 201 || !bytes.Contains(rec.Body.Bytes(), []byte("SHA256:")) {
+		t.Fatalf("create ssh key = %d: %s", rec.Code, rec.Body.String())
+	}
+	var keyResp struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &keyResp)
+
+	rec = doReq(t, h, "GET", "/api/v1/ssh-keys", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("workstation")) {
+		t.Fatalf("list ssh keys = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "DELETE", "/api/v1/ssh-keys/"+keyResp.ID, nil, cookies, csrf)
+	if rec.Code != 204 {
+		t.Fatalf("delete ssh key = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 3. Domain SSL DNS-01 & Custom Cert Upload
+	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{"domain": "ssltest.example"}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create domain = %d: %s", rec.Code, rec.Body.String())
+	}
+	var domResp struct {
+		Domain struct {
+			ID string `json:"id"`
+		} `json:"domain"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &domResp)
+
+	rec = doReq(t, h, "POST", "/api/v1/domains/"+domResp.Domain.ID+"/ssl", map[string]any{
+		"challenge": "dns-01", "wildcard": true, "dns_provider": "cloudflare",
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"letsencrypt-dns01"`)) {
+		t.Fatalf("issue dns-01 ssl = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "ssltest.example"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	keyDER, _ := x509.MarshalECPrivateKey(priv)
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+
+	rec = doReq(t, h, "POST", "/api/v1/domains/"+domResp.Domain.ID+"/ssl/custom", map[string]any{
+		"certificate_pem": certPEM,
+		"private_key_pem": keyPEM,
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"ssl_mode":"custom"`)) {
+		t.Fatalf("upload custom ssl = %d: %s", rec.Code, rec.Body.String())
 	}
 
 	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {

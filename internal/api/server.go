@@ -123,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/domains/{id}", s.requireAuth(s.handleUpdateDomain))
 	mux.HandleFunc("DELETE /api/v1/domains/{id}", s.requireAuth(s.handleDeleteDomain))
 	mux.HandleFunc("POST /api/v1/domains/{id}/ssl", s.requireAuth(s.handleIssueSSL))
+	mux.HandleFunc("POST /api/v1/domains/{id}/ssl/custom", s.requireAuth(s.handleUploadCustomSSL))
 	mux.HandleFunc("GET /api/v1/domains/{id}/logs", s.requireAuth(s.handleDomainLogs))
 	mux.HandleFunc("GET /api/v1/domains/{id}/custom-nginx", s.requireAuth(s.handleGetDomainCustomNginx))
 	mux.HandleFunc("PUT /api/v1/domains/{id}/custom-nginx", s.requireAuth(s.handleSetDomainCustomNginx))
@@ -164,7 +165,13 @@ func (s *Server) Handler() http.Handler {
 	// FTP / SFTP (7.7)
 	mux.HandleFunc("GET /api/v1/ftp", s.requireAuth(s.handleListFTP))
 	mux.HandleFunc("POST /api/v1/ftp", s.requireAuth(s.handleCreateFTP))
+	mux.HandleFunc("PATCH /api/v1/ftp/{id}", s.requireAuth(s.handleUpdateFTP))
 	mux.HandleFunc("DELETE /api/v1/ftp/{id}", s.requireAuth(s.handleDeleteFTP))
+
+	// SSH Keys (7.8)
+	mux.HandleFunc("GET /api/v1/ssh-keys", s.requireAuth(s.handleListSSHKeys))
+	mux.HandleFunc("POST /api/v1/ssh-keys", s.requireAuth(s.handleCreateSSHKey))
+	mux.HandleFunc("DELETE /api/v1/ssh-keys/{id}", s.requireAuth(s.handleDeleteSSHKey))
 
 	// Firewall & Bans (7.10)
 	mux.HandleFunc("GET /api/v1/firewall/rules", s.requireAuth(s.handleListFirewallRules))
