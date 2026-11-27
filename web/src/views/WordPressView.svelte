@@ -178,6 +178,7 @@
         security_score: updatedScore,
         security_issues: '[]',
       };
+      await loadSites();
     } catch (err) {
       securityError =
         err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;

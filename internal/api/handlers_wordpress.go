@@ -346,8 +346,15 @@ func (s *Server) handleHardenWPSite(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
 		return
 	}
+	owner, _ := s.store.GetUserByID(r.Context(), site.UserID)
+	uname := ""
+	if owner != nil {
+		uname = owner.Username
+	}
 	resp, err := s.agent.Call(r.Context(), agentproto.CmdWPSecurityHarden, map[string]any{
-		"path": site.Path,
+		"path":     site.Path,
+		"username": uname,
+		"domain":   site.Domain,
 	})
 	if err != nil || !resp.OK {
 		msg := ""

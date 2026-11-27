@@ -3346,8 +3346,20 @@ func wpScanSites(resp agentproto.Response, dryRun bool, logger *slog.Logger, arg
 				issues = append(issues, map[string]any{"id": "wp_config_perms", "severity": "high", "title": "wp-config.php permissions should be 0600", "fixed": false})
 			}
 			if _, err := os.Stat(filepath.Join(docroot, "xmlrpc.php")); err == nil {
-				score -= 10
-				issues = append(issues, map[string]any{"id": "wp_xmlrpc", "severity": "low", "title": "xmlrpc.php exists", "fixed": false})
+				xmlrpcBlocked := false
+				if hb, err := os.ReadFile(filepath.Join(docroot, ".htaccess")); err == nil && strings.Contains(string(hb), "xmlrpc.php") {
+					xmlrpcBlocked = true
+				}
+				if agentproto.ValidateLinuxUsername(username) == nil && dom != "" {
+					secConf := fmt.Sprintf("/home/%s/web/%s/conf/nginx/stako-wp-security.conf", username, dom)
+					if sb, err := os.ReadFile(secConf); err == nil && strings.Contains(string(sb), "xmlrpc.php") {
+						xmlrpcBlocked = true
+					}
+				}
+				if !xmlrpcBlocked {
+					score -= 10
+					issues = append(issues, map[string]any{"id": "wp_xmlrpc", "severity": "low", "title": "xmlrpc.php exists", "fixed": false})
+				}
 			}
 			if score < 0 {
 				score = 0
@@ -3445,6 +3457,8 @@ func wpStagingSync(resp agentproto.Response, dryRun bool, logger *slog.Logger, a
 
 func wpHardenSite(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
 	docroot, _ := args["path"].(string)
+	username, _ := args["username"].(string)
+	domain, _ := args["domain"].(string)
 	if dryRun || docroot == "" {
 		return runExec(resp, true, logger, "chmod", "0600", filepath.Join(docroot, "wp-config.php"))
 	}
@@ -3466,9 +3480,17 @@ func wpHardenSite(resp agentproto.Response, dryRun bool, logger *slog.Logger, ar
 		_ = os.Chmod(cfgFile, 0o600)
 	}
 	htaccess := filepath.Join(docroot, ".htaccess")
-	if b, err := os.ReadFile(htaccess); err == nil && !strings.Contains(string(b), "xmlrpc.php") {
+	existingHT, _ := os.ReadFile(htaccess)
+	if !strings.Contains(string(existingHT), "xmlrpc.php") {
 		block := "\n# Stako WP Security\n<Files xmlrpc.php>\n  Require all denied\n</Files>\n"
-		_ = os.WriteFile(htaccess, append(b, []byte(block)...), 0o644)
+		_ = os.WriteFile(htaccess, append(existingHT, []byte(block)...), 0o644)
+	}
+	if agentproto.ValidateLinuxUsername(username) == nil && agentproto.ValidateDomain(domain) == nil {
+		nginxDir := fmt.Sprintf("/home/%s/web/%s/conf/nginx", username, domain)
+		_ = os.MkdirAll(nginxDir, 0o750)
+		secConf := filepath.Join(nginxDir, "stako-wp-security.conf")
+		_ = os.WriteFile(secConf, []byte("# Managed by Stako WP Security\nlocation = /xmlrpc.php {\n    deny all;\n    return 403;\n}\n"), 0o644)
+		_ = exec.Command("systemctl", "reload", "nginx").Run()
 	}
 	resp.OK = true
 	resp.Output = "WordPress security hardening applied"
