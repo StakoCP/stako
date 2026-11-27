@@ -24,6 +24,7 @@ export type RouteName =
   | 'monitoring'
   | 'logs'
   | 'nodes'
+  | 'migrations'
   | 'configs'
   | 'system-services'
   | 'terminal'
@@ -70,6 +71,7 @@ function parseHash(): RouteMatch {
   if (path === '/monitoring') return { name: 'monitoring', params: {}, path };
   if (path === '/logs') return { name: 'logs', params: {}, path };
   if (path === '/nodes') return { name: 'nodes', params: {}, path };
+  if (path === '/migrations') return { name: 'migrations', params: {}, path };
   if (path === '/configs') return { name: 'configs', params: {}, path };
   if (path === '/system-services') return { name: 'system-services', params: {}, path };
   if (path === '/terminal') return { name: 'terminal', params: {}, path };

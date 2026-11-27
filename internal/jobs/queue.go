@@ -160,6 +160,10 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdGitDeploy
 	case "panel.import":
 		cmd = agentproto.CmdPanelImport
+	case "migration.export":
+		cmd = agentproto.CmdMigrationExport
+	case "migration.transfer":
+		cmd = agentproto.CmdMigrationTransfer
 	case "panel.update":
 		cmd = agentproto.CmdPanelUpdate
 	case "sysservice.install", "sysservice.uninstall":

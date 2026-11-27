@@ -266,11 +266,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/git-deploys/{id}/trigger", s.requireAuth(s.handleTriggerGitDeploy))
 	mux.HandleFunc("DELETE /api/v1/git-deploys/{id}", s.requireAuth(s.handleDeleteGitDeploy))
 
-	// Multi-Server Nodes & Panel Import (7.13)
+	// Multi-Server Nodes & Panel Import / Migrations (7.13)
 	mux.HandleFunc("GET /api/v1/nodes", s.requireAuth(s.handleListNodes))
 	mux.HandleFunc("POST /api/v1/nodes", s.requireAuth(s.handleCreateNode))
 	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.requireAuth(s.handleDeleteNode))
 	mux.HandleFunc("POST /api/v1/import", s.requireAuth(s.handlePanelImport))
+	mux.HandleFunc("GET /api/v1/migrations/bundles", s.requireAuth(s.handleListMigrationBundles))
+	mux.HandleFunc("POST /api/v1/migrations/inspect", s.requireAuth(s.handleInspectMigration))
+	mux.HandleFunc("POST /api/v1/migrations/export", s.requireAuth(s.handleExportAccount))
+	mux.HandleFunc("POST /api/v1/migrations/import", s.requireAuth(s.handleMigrationImport))
+	mux.HandleFunc("POST /api/v1/migrations/transfer", s.requireAuth(s.handleMigrationTransfer))
 
 	// Security Incident Response, Backup Download, Billing SSO
 	mux.HandleFunc("POST /api/v1/security/rotate-keys", s.requireAuth(s.handleRotateKeys))

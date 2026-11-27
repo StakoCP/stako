@@ -218,6 +218,12 @@
           roles: ['admin'],
         },
         {
+          path: '/migrations',
+          label: () => i18n.t.nav.migrations,
+          activeNames: ['migrations'],
+          roles: ['admin'],
+        },
+        {
           path: '/configs',
           label: () => i18n.t.nav.configs,
           activeNames: ['configs'],

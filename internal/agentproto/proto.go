@@ -78,9 +78,13 @@ const (
 	CmdSysServiceList    = "sysservice.list"
 	CmdSysServiceAct     = "sysservice.action"
 	CmdSysServicePkg     = "sysservice.pkg"
-	CmdLogsQuery         = "logs.query"
-	CmdLogsRotate        = "logs.rotate"
-	CmdLogsShippingApply = "logs.shipping_apply"
+	CmdLogsQuery            = "logs.query"
+	CmdLogsRotate           = "logs.rotate"
+	CmdLogsShippingApply    = "logs.shipping_apply"
+	CmdMigrationInspect     = "migration.inspect"
+	CmdMigrationExport      = "migration.export"
+	CmdMigrationTransfer    = "migration.transfer"
+	CmdMigrationListBundles = "migration.list_bundles"
 )
 
 type Request struct {

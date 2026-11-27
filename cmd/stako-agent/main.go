@@ -1526,9 +1526,19 @@ logfile /var/log/redis/redis-server-%s.log
 		return resp
 
 	case agentproto.CmdPanelImport:
-		src, _ := req.Args["source_panel"].(string)
-		arch, _ := req.Args["archive_path"].(string)
-		return runExec(resp, dryRun, logger, "stako-import", src, arch)
+		return runPanelImport(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdMigrationInspect:
+		return inspectMigrationArchive(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdMigrationExport:
+		return exportStakoAccount(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdMigrationTransfer:
+		return transferMigrationArchive(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdMigrationListBundles:
+		return listMigrationBundles(resp, dryRun)
 
 	case agentproto.CmdSysConfigRead:
 		p, _ := req.Args["path"].(string)
@@ -2681,5 +2691,443 @@ func applyLogShipping(resp agentproto.Response, dryRun bool, logger *slog.Logger
 	logger.Info("applied log shipping config", "syslog_enabled", syslogEnabled, "loki_enabled", lokiEnabled)
 	resp.OK = true
 	resp.Output = "Log shipping configuration applied"
+	return resp
+}
+
+const migrationBundlesDir = "/var/lib/stako/migrations"
+
+func listMigrationBundles(resp agentproto.Response, dryRun bool) agentproto.Response {
+	if dryRun {
+		resp.OK = true
+		resp.Data = map[string]any{
+			"bundles": []map[string]any{
+				{
+					"name":       "stako-demo-20261127.tar.gz",
+					"path":       migrationBundlesDir + "/stako-demo-20261127.tar.gz",
+					"size_bytes": 1048576,
+					"created_at": time.Now().UTC().Format(time.RFC3339),
+				},
+			},
+		}
+		return resp
+	}
+	_ = os.MkdirAll(migrationBundlesDir, 0o750)
+	entries, err := os.ReadDir(migrationBundlesDir)
+	if err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	var bundles []map[string]any
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tar.gz") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		bundles = append(bundles, map[string]any{
+			"name":       e.Name(),
+			"path":       filepath.Join(migrationBundlesDir, e.Name()),
+			"size_bytes": info.Size(),
+			"created_at": info.ModTime().UTC().Format(time.RFC3339),
+		})
+	}
+	if bundles == nil {
+		bundles = []map[string]any{}
+	}
+	resp.OK = true
+	resp.Data = map[string]any{"bundles": bundles}
+	return resp
+}
+
+func inspectMigrationArchive(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	srcPanel, _ := args["source_panel"].(string)
+	archPath, _ := args["archive_path"].(string)
+	if archPath == "" || strings.Contains(archPath, "..") {
+		resp.Error = "invalid archive_path"
+		return resp
+	}
+
+	if dryRun {
+		if srcPanel == "" || srcPanel == "auto" {
+			srcPanel = "hestiacp"
+		}
+		resp.OK = true
+		resp.Data = map[string]any{
+			"source_panel": srcPanel,
+			"archive_path": archPath,
+			"username":     "migrated_user",
+			"domains":      []string{"example.com", "shop.example.com"},
+			"databases":    []string{"migrated_user_wp", "migrated_user_shop"},
+			"mail_domains": []string{"example.com"},
+			"mailboxes":    []string{"admin@example.com", "info@example.com"},
+			"cron_jobs":    []string{"0 2 * * * /usr/bin/php /home/migrated_user/web/example.com/public_html/cron.php"},
+			"size_bytes":   int64(52428800),
+			"notes":        []string{"[dry-run] Archive inspection simulated for " + srcPanel},
+		}
+		return resp
+	}
+
+	info, err := os.Stat(archPath)
+	if err != nil {
+		resp.Error = fmt.Sprintf("stat archive: %v", err)
+		return resp
+	}
+
+	tarArgs := []string{"-tf", archPath}
+	if strings.HasSuffix(archPath, ".zst") {
+		tarArgs = []string{"--zstd", "-tf", archPath}
+	}
+	out, err := exec.Command("tar", tarArgs...).Output()
+	if err != nil {
+		resp.Error = fmt.Sprintf("list archive contents: %v", err)
+		return resp
+	}
+
+	lines := strings.Split(string(out), "\n")
+	domSet := map[string]bool{}
+	dbSet := map[string]bool{}
+	mailDomSet := map[string]bool{}
+	mailboxSet := map[string]bool{}
+	var username string
+	detected := srcPanel
+
+	for _, raw := range lines {
+		p := strings.TrimPrefix(strings.TrimSpace(raw), "./")
+		if p == "" {
+			continue
+		}
+		if p == "manifest.json" {
+			detected = "stako"
+		}
+		if strings.HasPrefix(p, "cp/") || strings.HasPrefix(p, "homedir/") {
+			if detected == "" || detected == "auto" {
+				detected = "cpanel"
+			}
+			if strings.HasPrefix(p, "cp/") {
+				name := strings.TrimPrefix(p, "cp/")
+				if name != "" && !strings.Contains(name, "/") {
+					username = name
+				}
+			}
+			if strings.HasPrefix(p, "mysql/") && strings.HasSuffix(p, ".sql") {
+				dbName := strings.TrimSuffix(filepath.Base(p), ".sql")
+				dbSet[dbName] = true
+			}
+			if strings.HasPrefix(p, "va/") && !strings.Contains(strings.TrimPrefix(p, "va/"), "/") {
+				d := strings.TrimPrefix(p, "va/")
+				if d != "" {
+					mailDomSet[d] = true
+				}
+			}
+		}
+		// HestiaCP / VestaCP layout: web/<domain>/..., db/<db>.sql, mail/<domain>/<localpart>/
+		if strings.HasPrefix(p, "web/") {
+			parts := strings.Split(p, "/")
+			if len(parts) >= 2 && parts[1] != "" {
+				domSet[parts[1]] = true
+			}
+			if detected == "" || detected == "auto" {
+				detected = "hestiacp"
+			}
+		}
+		if strings.HasPrefix(p, "db/") && (strings.HasSuffix(p, ".sql") || strings.HasSuffix(p, ".sql.gz")) {
+			base := filepath.Base(p)
+			base = strings.TrimSuffix(strings.TrimSuffix(base, ".gz"), ".sql")
+			if base != "" {
+				dbSet[base] = true
+			}
+		}
+		if strings.HasPrefix(p, "mail/") {
+			parts := strings.Split(p, "/")
+			if len(parts) >= 2 && parts[1] != "" {
+				mailDomSet[parts[1]] = true
+			}
+			if len(parts) >= 3 && parts[2] != "" && !strings.HasPrefix(parts[2], ".") {
+				mailboxSet[parts[2]+"@"+parts[1]] = true
+			}
+		}
+	}
+
+	if detected == "" || detected == "auto" {
+		detected = "hestiacp"
+	}
+	if username == "" {
+		base := filepath.Base(archPath)
+		username = strings.SplitN(base, ".", 2)[0]
+		username = strings.TrimPrefix(username, "cpmove-")
+	}
+
+	mapKeys := func(m map[string]bool) []string {
+		out := make([]string, 0, len(m))
+		for k := range m {
+			out = append(out, k)
+		}
+		return out
+	}
+
+	logger.Info("inspected migration archive", "panel", detected, "path", archPath)
+	resp.OK = true
+	resp.Data = map[string]any{
+		"source_panel": detected,
+		"archive_path": archPath,
+		"username":     username,
+		"domains":      mapKeys(domSet),
+		"databases":    mapKeys(dbSet),
+		"mail_domains": mapKeys(mailDomSet),
+		"mailboxes":    mapKeys(mailboxSet),
+		"cron_jobs":    []string{},
+		"size_bytes":   info.Size(),
+		"notes":        []string{},
+	}
+	return resp
+}
+
+func exportStakoAccount(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	username, _ := args["username"].(string)
+	if err := agentproto.ValidateLinuxUsername(username); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	manifestJSON, _ := args["manifest_json"].(string)
+	bundleName := fmt.Sprintf("stako-%s-%s.tar.gz", username, time.Now().UTC().Format("20060102-150405"))
+	bundlePath := filepath.Join(migrationBundlesDir, bundleName)
+
+	if dryRun {
+		resp.OK = true
+		resp.Output = "[dry-run] exported account " + username + " to " + bundlePath
+		resp.Data = map[string]any{"bundle_name": bundleName, "bundle_path": bundlePath}
+		return resp
+	}
+
+	_ = os.MkdirAll(migrationBundlesDir, 0o750)
+	stageDir, err := os.MkdirTemp("", "stako-export-*")
+	if err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	defer os.RemoveAll(stageDir)
+
+	if manifestJSON != "" {
+		_ = os.WriteFile(filepath.Join(stageDir, "manifest.json"), []byte(manifestJSON), 0o600)
+	}
+
+	// Copy /home/<username> if present
+	homeDir := filepath.Join("/home", username)
+	if _, err := os.Stat(homeDir); err == nil {
+		_ = exec.Command("cp", "-a", homeDir, filepath.Join(stageDir, "home")).Run()
+	}
+
+	// Dump databases listed in args["databases"]
+	if dbsRaw, ok := args["databases"].([]any); ok && len(dbsRaw) > 0 {
+		dbStage := filepath.Join(stageDir, "db")
+		_ = os.MkdirAll(dbStage, 0o750)
+		for _, item := range dbsRaw {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			dbName, _ := m["name"].(string)
+			engine, _ := m["engine"].(string)
+			if err := agentproto.ValidateDBIdent(dbName); err != nil {
+				continue
+			}
+			outPath := filepath.Join(dbStage, dbName+".sql")
+			if engine == "postgres" {
+				if out, err := exec.Command("sudo", "-u", "postgres", "pg_dump", dbName).Output(); err == nil {
+					_ = os.WriteFile(outPath, out, 0o600)
+				}
+			} else {
+				if out, err := exec.Command("mysqldump", "--single-transaction", dbName).Output(); err == nil {
+					_ = os.WriteFile(outPath, out, 0o600)
+				}
+			}
+		}
+	}
+
+	if out, err := exec.Command("tar", "-czf", bundlePath, "-C", stageDir, ".").CombinedOutput(); err != nil {
+		resp.Error = fmt.Sprintf("tar export: %v: %s", err, strings.TrimSpace(string(out)))
+		return resp
+	}
+	logger.Info("exported stako account", "username", username, "bundle", bundlePath)
+	resp.OK = true
+	resp.Output = "Exported " + username + " to " + bundlePath
+	resp.Data = map[string]any{"bundle_name": bundleName, "bundle_path": bundlePath}
+	return resp
+}
+
+func transferMigrationArchive(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	direction, _ := args["direction"].(string) // "pull" or "push"
+	host, _ := args["remote_host"].(string)
+	port := 22
+	if pf, ok := args["remote_port"].(float64); ok && pf > 0 && pf <= 65535 {
+		port = int(pf)
+	}
+	user, _ := args["remote_user"].(string)
+	remotePath, _ := args["remote_path"].(string)
+	localPath, _ := args["local_path"].(string)
+	if host == "" || user == "" || remotePath == "" {
+		resp.Error = "remote_host, remote_user, and remote_path are required"
+		return resp
+	}
+	if localPath == "" {
+		localPath = filepath.Join(migrationBundlesDir, fmt.Sprintf("incoming-%s.tar.gz", time.Now().UTC().Format("20060102-150405")))
+	}
+
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] scp -P %d %s %s@%s:%s -> %s", port, direction, user, host, remotePath, localPath)
+		resp.Data = map[string]any{"local_path": localPath}
+		return resp
+	}
+
+	_ = os.MkdirAll(migrationBundlesDir, 0o750)
+	remoteSpec := fmt.Sprintf("%s@%s:%s", user, host, remotePath)
+	scpArgs := []string{"-o", "StrictHostKeyChecking=accept-new", "-P", strconv.Itoa(port)}
+	if direction == "push" {
+		scpArgs = append(scpArgs, localPath, remoteSpec)
+	} else {
+		scpArgs = append(scpArgs, remoteSpec, localPath)
+	}
+	out, err := exec.Command("scp", scpArgs...).CombinedOutput()
+	if err != nil {
+		resp.Error = fmt.Sprintf("scp %s: %v: %s", direction, err, strings.TrimSpace(string(out)))
+		return resp
+	}
+	logger.Info("transferred migration archive", "direction", direction, "host", host, "local", localPath)
+	resp.OK = true
+	resp.Output = strings.TrimSpace(string(out))
+	resp.Data = map[string]any{"local_path": localPath}
+	return resp
+}
+
+func runPanelImport(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	srcPanel, _ := args["source_panel"].(string)
+	archPath, _ := args["archive_path"].(string)
+	targetUser, _ := args["target_username"].(string)
+	includeFiles := true
+	if v, ok := args["include_files"].(bool); ok {
+		includeFiles = v
+	}
+	includeDB := true
+	if v, ok := args["include_databases"].(bool); ok {
+		includeDB = v
+	}
+	includeMail := true
+	if v, ok := args["include_mail"].(bool); ok {
+		includeMail = v
+	}
+
+	if archPath == "" || strings.Contains(archPath, "..") {
+		resp.Error = "invalid archive_path"
+		return resp
+	}
+
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] imported %s archive %s (user=%s files=%v db=%v mail=%v)", srcPanel, archPath, targetUser, includeFiles, includeDB, includeMail)
+		return resp
+	}
+
+	if _, err := os.Stat(archPath); err != nil {
+		resp.Error = fmt.Sprintf("archive not found: %v", err)
+		return resp
+	}
+
+	workDir, err := os.MkdirTemp("", "stako-import-*")
+	if err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	defer os.RemoveAll(workDir)
+
+	tarArgs := []string{"-xf", archPath, "-C", workDir}
+	if strings.HasSuffix(archPath, ".zst") {
+		tarArgs = []string{"--zstd", "-xf", archPath, "-C", workDir}
+	}
+	if out, err := exec.Command("tar", tarArgs...).CombinedOutput(); err != nil {
+		resp.Error = fmt.Sprintf("extract archive: %v: %s", err, strings.TrimSpace(string(out)))
+		return resp
+	}
+
+	var notes []string
+	if targetUser != "" && agentproto.ValidateLinuxUsername(targetUser) == nil {
+		homeDst := filepath.Join("/home", targetUser)
+		_ = os.MkdirAll(homeDst, 0o750)
+		if includeFiles {
+			// Stako bundle: home/ -> /home/<targetUser>
+			if _, err := os.Stat(filepath.Join(workDir, "home")); err == nil {
+				_ = exec.Command("cp", "-a", filepath.Join(workDir, "home")+"/.", homeDst+"/").Run()
+				notes = append(notes, "restored Stako home directory")
+			}
+			// HestiaCP / VestaCP: web/<domain>/public_html -> /home/<targetUser>/web/<domain>/public_html
+			if webEntries, err := os.ReadDir(filepath.Join(workDir, "web")); err == nil {
+				for _, de := range webEntries {
+					if !de.IsDir() {
+						continue
+					}
+					srcPub := filepath.Join(workDir, "web", de.Name(), "public_html")
+					dstPub := filepath.Join(homeDst, "web", de.Name(), "public_html")
+					if _, err := os.Stat(srcPub); err == nil {
+						_ = os.MkdirAll(dstPub, 0o750)
+						_ = exec.Command("cp", "-a", srcPub+"/.", dstPub+"/").Run()
+						notes = append(notes, "restored web root for "+de.Name())
+					}
+				}
+			}
+			// cPanel: homedir/public_html -> /home/<targetUser>/public_html
+			if _, err := os.Stat(filepath.Join(workDir, "homedir")); err == nil {
+				_ = exec.Command("cp", "-a", filepath.Join(workDir, "homedir")+"/.", homeDst+"/").Run()
+				notes = append(notes, "restored cPanel homedir")
+			}
+			_ = exec.Command("chown", "-R", targetUser+":"+targetUser, homeDst).Run()
+		}
+	}
+
+	if includeDB {
+		for _, dbDir := range []string{filepath.Join(workDir, "db"), filepath.Join(workDir, "mysql")} {
+			if entries, err := os.ReadDir(dbDir); err == nil {
+				for _, e := range entries {
+					if e.IsDir() || (!strings.HasSuffix(e.Name(), ".sql") && !strings.HasSuffix(e.Name(), ".sql.gz")) {
+						continue
+					}
+					dbName := strings.TrimSuffix(strings.TrimSuffix(e.Name(), ".gz"), ".sql")
+					if err := agentproto.ValidateDBIdent(dbName); err != nil {
+						continue
+					}
+					_ = exec.Command("mysql", "-e", fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", dbName)).Run()
+					sqlPath := filepath.Join(dbDir, e.Name())
+					if strings.HasSuffix(e.Name(), ".gz") {
+						_ = exec.Command("sh", "-c", fmt.Sprintf("zcat %q | mysql %q", sqlPath, dbName)).Run()
+					} else {
+						_ = exec.Command("sh", "-c", fmt.Sprintf("mysql %q < %q", dbName, sqlPath)).Run()
+					}
+					notes = append(notes, "imported database "+dbName)
+				}
+			}
+		}
+	}
+
+	if includeMail {
+		if mailEntries, err := os.ReadDir(filepath.Join(workDir, "mail")); err == nil {
+			for _, me := range mailEntries {
+				if !me.IsDir() {
+					continue
+				}
+				dstMail := filepath.Join("/var/mail/vhosts", me.Name())
+				_ = os.MkdirAll(dstMail, 0o750)
+				_ = exec.Command("cp", "-a", filepath.Join(workDir, "mail", me.Name())+"/.", dstMail+"/").Run()
+				notes = append(notes, "restored mail domain "+me.Name())
+			}
+		}
+	}
+
+	logger.Info("panel import completed", "source_panel", srcPanel, "archive", archPath, "notes", len(notes))
+	resp.OK = true
+	resp.Output = strings.Join(notes, "; ")
+	if resp.Output == "" {
+		resp.Output = "Import completed for " + archPath
+	}
 	return resp
 }

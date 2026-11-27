@@ -923,3 +923,85 @@ func TestCentralizedLogsRotationAndShipping(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestMigrationsExportInspectImportAndTransfer(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Create a user to export
+	rec = doReq(t, h, "POST", "/api/v1/users", map[string]string{
+		"username": "migalice", "email": "migalice@example.com", "password": "Alice-Strong-Password-123", "role": "user",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create user = %d: %s", rec.Code, rec.Body.String())
+	}
+	var uResp struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &uResp)
+
+	// List bundles
+	if rec := doReq(t, h, "GET", "/api/v1/migrations/bundles", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("list bundles = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Export account
+	if rec := doReq(t, h, "POST", "/api/v1/migrations/export", map[string]any{
+		"user_id": uResp.User.ID,
+	}, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("export account = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Inspect HestiaCP/cPanel/VestaCP archive
+	if rec := doReq(t, h, "POST", "/api/v1/migrations/inspect", map[string]any{
+		"source_panel": "hestiacp",
+		"archive_path": "/var/backups/hestia-alice.tar.gz",
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("inspect archive = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Import account with auto-provisioning
+	if rec := doReq(t, h, "POST", "/api/v1/migrations/import", map[string]any{
+		"source_panel":      "cpanel",
+		"archive_path":      "/var/backups/cpmove-bob.tar.gz",
+		"target_username":   "bob",
+		"target_email":      "bob@example.com",
+		"domains":           []string{"bobsite.example.com"},
+		"databases":         []string{"bob_wp"},
+		"mail_domains":      []string{"bobsite.example.com"},
+		"include_files":     true,
+		"include_databases": true,
+		"include_mail":      true,
+	}, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("import account = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Server-to-server transfer
+	if rec := doReq(t, h, "POST", "/api/v1/migrations/transfer", map[string]any{
+		"direction":   "pull",
+		"remote_host": "203.0.113.50",
+		"remote_port": 22,
+		"remote_user": "root",
+		"remote_path": "/var/backups/user.tar.gz",
+	}, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("transfer = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

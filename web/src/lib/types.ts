@@ -568,7 +568,27 @@ export interface ServerNode {
   created_at: string;
 }
 
-export type ImportSourcePanel = 'hestiacp' | 'cpanel' | 'vestacp';
+export type ImportSourcePanel = 'auto' | 'stako' | 'hestiacp' | 'cpanel' | 'vestacp';
+
+export interface MigrationBundle {
+  name: string;
+  path: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface MigrationInspectResult {
+  source_panel: string;
+  archive_path: string;
+  username: string;
+  domains: string[];
+  databases: string[];
+  mail_domains: string[];
+  mailboxes: string[];
+  cron_jobs: string[];
+  size_bytes: number;
+  notes: string[];
+}
 
 export interface ServiceConfigMeta {
   service: string;
