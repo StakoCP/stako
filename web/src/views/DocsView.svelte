@@ -1,14 +1,43 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
+  import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
+
+  interface OpenApiParameter {
+    name: string;
+    in: string;
+    required?: boolean;
+    description?: string;
+    schema?: { type?: string };
+  }
+
+  interface OpenApiMediaType {
+    schema?: unknown;
+    example?: unknown;
+  }
+
+  interface OpenApiRequestBody {
+    required?: boolean;
+    description?: string;
+    content?: Record<string, OpenApiMediaType>;
+  }
+
+  interface OpenApiResponse {
+    description?: string;
+    content?: Record<string, OpenApiMediaType>;
+  }
 
   interface OpenApiOperation {
     summary?: string;
     description?: string;
     tags?: string[];
     operationId?: string;
+    parameters?: OpenApiParameter[];
+    requestBody?: OpenApiRequestBody;
+    responses?: Record<string, OpenApiResponse>;
   }
 
   interface OpenApiSpec {
@@ -26,9 +55,19 @@
     path: string;
     tag: string;
     summary: string;
+    parameters: OpenApiParameter[];
+    requestExample: unknown;
+    hasRequestExample: boolean;
+    responseStatus: string;
+    responseDescription: string;
+    responseExample: unknown;
+    hasResponseExample: boolean;
+    validationErrorExample: unknown;
+    hasValidationErrorExample: boolean;
   }
 
   const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
+  const SUCCESS_STATUS_CODES = ['200', '201', '202', '204'];
 
   const SAMPLE_AUTH_CURL = `curl -sS -H "Authorization: Bearer stk_your_api_token" \\
   https://panel.example.com/api/v1/system/info`;
@@ -55,6 +94,7 @@ stako doctor`;
   let selectedTag = $state('');
   let searchQuery = $state('');
   let showRaw = $state(false);
+  let selectedEndpoint = $state<EndpointRow | null>(null);
 
   async function loadSpec() {
     loading = true;
@@ -80,11 +120,30 @@ stako doctor`;
       for (const [methodKey, op] of Object.entries(pathItem)) {
         const lower = methodKey.toLowerCase();
         if (!HTTP_METHODS.includes(lower) || !op || typeof op !== 'object') continue;
+        const reqEx = op.requestBody?.content?.['application/json']?.example;
+        const responses = op.responses ?? {};
+        const responseStatus =
+          SUCCESS_STATUS_CODES.find((code) => code in responses) ??
+          Object.keys(responses).find((code) => code.startsWith('2')) ??
+          '';
+        const resObj = responseStatus ? responses[responseStatus] : undefined;
+        const resEx = resObj?.content?.['application/json']?.example;
+        const valEx = responses['422']?.content?.['application/json']?.example;
+
         rows.push({
           method: lower.toUpperCase(),
           path,
           tag: op.tags && op.tags.length > 0 ? op.tags[0] : 'General',
           summary: op.summary || op.description || op.operationId || '',
+          parameters: Array.isArray(op.parameters) ? op.parameters : [],
+          requestExample: reqEx,
+          hasRequestExample: reqEx !== undefined,
+          responseStatus,
+          responseDescription: resObj?.description ?? '',
+          responseExample: resEx,
+          hasResponseExample: resEx !== undefined,
+          validationErrorExample: valEx,
+          hasValidationErrorExample: valEx !== undefined,
         });
       }
     }
@@ -129,17 +188,41 @@ stako doctor`;
     }
   }
 
+  function formatJson(value: unknown): string {
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value, null, 2);
+  }
+
+  function buildCurlExample(row: EndpointRow): string {
+    const origin =
+      typeof window !== 'undefined' ? window.location.origin : 'https://panel.example.com';
+    const lines = [
+      `curl -X ${row.method} "${origin}/api/v1${row.path}" \\`,
+      `  -H "Authorization: Bearer <API_KEY>"`,
+    ];
+    if (row.hasRequestExample) {
+      lines[lines.length - 1] += ' \\';
+      lines.push(`  -H "Content-Type: application/json" \\`);
+      lines.push(`  -d '${formatJson(row.requestExample)}'`);
+    }
+    return lines.join('\n');
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(i18n.t.common.copied);
+    } catch {
+      toast.error(i18n.t.common.errorGeneric);
+    }
+  }
+
   async function copySpecUrl() {
     const url =
       typeof window !== 'undefined'
         ? `${window.location.origin}/api/v1/openapi.json`
         : '/api/v1/openapi.json';
-    try {
-      await navigator.clipboard.writeText(url);
-      toast.success(i18n.t.common.copied);
-    } catch {
-      toast.error(i18n.t.common.errorGeneric);
-    }
+    await copyText(url);
   }
 </script>
 
@@ -271,15 +354,33 @@ stako doctor`;
             <th>{i18n.t.docs.endpoint}</th>
             <th>{i18n.t.docs.tag}</th>
             <th>{i18n.t.docs.summary}</th>
+            <th>{i18n.t.common.actions}</th>
           </tr>
         </thead>
         <tbody>
           {#each filteredEndpoints as row (`${row.method}:${row.path}`)}
-            <tr>
+            <tr onclick={() => (selectedEndpoint = row)}>
               <td><span class={methodBadgeClass(row.method)}>{row.method}</span></td>
               <td class="mono">/api/v1{row.path}</td>
               <td><span class="badge">{row.tag}</span></td>
               <td>{row.summary || '—'}</td>
+              <td>
+                <div class="table-actions">
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    title={i18n.t.docs.viewExample}
+                    aria-label={i18n.t.docs.viewExample}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      selectedEndpoint = row;
+                    }}
+                  >
+                    <ActionIcon name="eye" />
+                    {i18n.t.docs.viewExample}
+                  </button>
+                </div>
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -293,3 +394,141 @@ stako doctor`;
     <pre class="log-box">{JSON.stringify(spec, null, 2)}</pre>
   {/if}
 </div>
+
+<Modal
+  open={selectedEndpoint !== null}
+  title={selectedEndpoint
+    ? fmt(i18n.t.docs.detailTitle, {
+        method: selectedEndpoint.method,
+        path: `/api/v1${selectedEndpoint.path}`,
+      })
+    : ''}
+  size="lg"
+  onclose={() => (selectedEndpoint = null)}
+>
+  {#if selectedEndpoint}
+    <div class="toolbar">
+      <div class="toolbar-filters">
+        <span class={methodBadgeClass(selectedEndpoint.method)}>{selectedEndpoint.method}</span>
+        <code class="mono">/api/v1{selectedEndpoint.path}</code>
+        <span class="badge">{selectedEndpoint.tag}</span>
+      </div>
+    </div>
+    {#if selectedEndpoint.summary}
+      <p class="page-subtitle">{selectedEndpoint.summary}</p>
+    {/if}
+
+    {#if selectedEndpoint.parameters.length > 0}
+      <div class="section-divider"></div>
+      <h3 class="card-title">{i18n.t.docs.parametersTitle}</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>In</th>
+              <th>Required</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each selectedEndpoint.parameters as param (`${param.in}:${param.name}`)}
+              <tr>
+                <td class="mono">{param.name}</td>
+                <td><span class="badge">{param.in}</span></td>
+                <td>
+                  {#if param.required}
+                    <span class="badge badge-warning">required</span>
+                  {:else}
+                    <span class="badge">optional</span>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+
+    <div class="section-divider"></div>
+    <div class="page-header">
+      <h3 class="card-title">{i18n.t.docs.requestExampleTitle}</h3>
+      {#if selectedEndpoint.hasRequestExample}
+        <button
+          type="button"
+          class="btn btn-sm"
+          onclick={() => copyText(formatJson(selectedEndpoint!.requestExample))}
+        >
+          <ActionIcon name="copy" />
+          {i18n.t.docs.copyBtn}
+        </button>
+      {/if}
+    </div>
+    {#if selectedEndpoint.hasRequestExample}
+      <pre class="log-box">{formatJson(selectedEndpoint.requestExample)}</pre>
+    {:else}
+      <p class="page-subtitle">{i18n.t.docs.noRequestBody}</p>
+    {/if}
+
+    <div class="section-divider"></div>
+    <div class="page-header">
+      <h3 class="card-title">{i18n.t.docs.curlExampleTitle}</h3>
+      <button
+        type="button"
+        class="btn btn-sm"
+        onclick={() => copyText(buildCurlExample(selectedEndpoint!))}
+      >
+        <ActionIcon name="copy" />
+        {i18n.t.docs.copyBtn}
+      </button>
+    </div>
+    <pre class="log-box">{buildCurlExample(selectedEndpoint)}</pre>
+
+    {#if selectedEndpoint.responseStatus}
+      <div class="section-divider"></div>
+      <div class="page-header">
+        <h3 class="card-title">
+          {fmt(i18n.t.docs.responseExampleTitle, { status: selectedEndpoint.responseStatus })}
+        </h3>
+        {#if selectedEndpoint.hasResponseExample}
+          <button
+            type="button"
+            class="btn btn-sm"
+            onclick={() => copyText(formatJson(selectedEndpoint!.responseExample))}
+          >
+            <ActionIcon name="copy" />
+            {i18n.t.docs.copyBtn}
+          </button>
+        {/if}
+      </div>
+      {#if selectedEndpoint.hasResponseExample}
+        <pre class="log-box">{formatJson(selectedEndpoint.responseExample)}</pre>
+      {:else if selectedEndpoint.responseDescription}
+        <p class="page-subtitle">{selectedEndpoint.responseDescription}</p>
+      {/if}
+    {/if}
+
+    {#if selectedEndpoint.hasValidationErrorExample}
+      <div class="section-divider"></div>
+      <div class="page-header">
+        <h3 class="card-title">
+          {fmt(i18n.t.docs.responseExampleTitle, { status: '422' })}
+        </h3>
+        <button
+          type="button"
+          class="btn btn-sm"
+          onclick={() => copyText(formatJson(selectedEndpoint!.validationErrorExample))}
+        >
+          <ActionIcon name="copy" />
+          {i18n.t.docs.copyBtn}
+        </button>
+      </div>
+      <pre class="log-box">{formatJson(selectedEndpoint.validationErrorExample)}</pre>
+    {/if}
+  {/if}
+
+  {#snippet footer()}
+    <button type="button" class="btn btn-sm" onclick={() => (selectedEndpoint = null)}>
+      {i18n.t.common.close}
+    </button>
+  {/snippet}
+</Modal>
