@@ -399,7 +399,21 @@ export interface MailDomain {
   domain: string;
   dkim_selector: string;
   dkim_public_key: string;
+  relay_provider?: string;
+  relay_host?: string;
+  relay_port?: number;
+  relay_user?: string;
   created_at: string;
+}
+
+export interface ServerSMTPRelay {
+  enabled: boolean;
+  provider: string;
+  host: string;
+  port: number;
+  username: string;
+  tls_mode: string;
+  has_password: boolean;
 }
 
 export interface MailDnsRecord {

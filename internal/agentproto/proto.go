@@ -53,6 +53,7 @@ const (
 	CmdMailDomainDel   = "mail.domain_del"
 	CmdMailboxAdd      = "mail.mailbox_add"
 	CmdMailboxDel      = "mail.mailbox_del"
+	CmdMailRelayApply  = "mail.relay_apply"
 	CmdBackupRun       = "backup.run"
 	CmdBackupRestore   = "backup.restore"
 	CmdFileList        = "file.list"

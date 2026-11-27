@@ -50,8 +50,19 @@ func (s *Store) migratePhase4() error {
 		value TEXT NOT NULL
 	);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE mail_domains ADD COLUMN relay_provider TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE mail_domains ADD COLUMN relay_host TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE mail_domains ADD COLUMN relay_port INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE mail_domains ADD COLUMN relay_user TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE mail_domains ADD COLUMN relay_pass_enc TEXT NOT NULL DEFAULT ''`,
+	} {
+		_, _ = s.db.Exec(stmt)
+	}
+	return nil
 }
 
 // --- Settings / Lockdown ---
@@ -98,8 +109,8 @@ func (s *Store) GetMailDomain(ctx context.Context, id string) (*MailDomain, erro
 	var m MailDomain
 	var createdAt string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, domain, dkim_selector, dkim_public_key, created_at FROM mail_domains WHERE id=?`, id,
-	).Scan(&m.ID, &m.UserID, &m.Domain, &m.DKIMSelector, &m.DKIMPublicKey, &createdAt)
+		`SELECT id, user_id, domain, dkim_selector, dkim_public_key, relay_provider, relay_host, relay_port, relay_user, relay_pass_enc, created_at FROM mail_domains WHERE id=?`, id,
+	).Scan(&m.ID, &m.UserID, &m.Domain, &m.DKIMSelector, &m.DKIMPublicKey, &m.RelayProvider, &m.RelayHost, &m.RelayPort, &m.RelayUser, &m.RelayPassEnc, &createdAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -121,7 +132,7 @@ func (s *Store) ListMailDomains(ctx context.Context, userID, resellerID *string)
 		args = append(args, *resellerID, *resellerID)
 	}
 	join := `FROM mail_domains md JOIN users u ON md.user_id = u.id WHERE ` + strings.Join(where, " AND ")
-	rows, err := s.db.QueryContext(ctx, `SELECT md.id, md.user_id, md.domain, md.dkim_selector, md.dkim_public_key, md.created_at `+join+` ORDER BY md.created_at DESC`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT md.id, md.user_id, md.domain, md.dkim_selector, md.dkim_public_key, md.relay_provider, md.relay_host, md.relay_port, md.relay_user, md.relay_pass_enc, md.created_at `+join+` ORDER BY md.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -130,13 +141,27 @@ func (s *Store) ListMailDomains(ctx context.Context, userID, resellerID *string)
 	for rows.Next() {
 		var m MailDomain
 		var createdAt string
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Domain, &m.DKIMSelector, &m.DKIMPublicKey, &createdAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Domain, &m.DKIMSelector, &m.DKIMPublicKey, &m.RelayProvider, &m.RelayHost, &m.RelayPort, &m.RelayUser, &m.RelayPassEnc, &createdAt); err != nil {
 			return nil, err
 		}
 		m.CreatedAt = parseTime(createdAt)
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) UpdateMailDomainRelay(ctx context.Context, id, provider, host string, port int, user, passEnc string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE mail_domains SET relay_provider=?, relay_host=?, relay_port=?, relay_user=?, relay_pass_enc=? WHERE id=?`,
+		provider, host, port, user, passEnc, id,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) DeleteMailDomain(ctx context.Context, id string) error {

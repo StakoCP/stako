@@ -12,8 +12,18 @@
     MailDomain,
     Mailbox,
     PaginatedResponse,
+    ServerSMTPRelay,
     User,
   } from '../lib/types';
+
+  const RELAY_PRESETS: Record<string, { label: string; host: string; port: number; user?: string }> = {
+    ses: { label: 'Amazon SES', host: 'email-smtp.us-east-1.amazonaws.com', port: 587 },
+    mailgun: { label: 'Mailgun', host: 'smtp.mailgun.org', port: 587 },
+    brevo: { label: 'Brevo (Sendinblue)', host: 'smtp-relay.brevo.com', port: 587 },
+    sendgrid: { label: 'SendGrid', host: 'smtp.sendgrid.net', port: 587, user: 'apikey' },
+    postmark: { label: 'Postmark', host: 'smtp.postmarkapp.com', port: 587 },
+    custom: { label: 'Custom SMTP', host: '', port: 587 },
+  };
 
   let domains = $state<MailDomain[]>([]);
   let users = $state<User[]>([]);
@@ -56,6 +66,33 @@
   // Delete Mailbox modal
   let deleteMailboxTarget = $state<Mailbox | null>(null);
   let deletingMailbox = $state(false);
+
+  // Server SMTP Relay modal
+  let serverRelayOpen = $state(false);
+  let loadingServerRelay = $state(false);
+  let savingServerRelay = $state(false);
+  let testingServerRelay = $state(false);
+  let serverRelayError = $state('');
+  let srEnabled = $state(false);
+  let srProvider = $state('ses');
+  let srHost = $state('');
+  let srPort = $state(587);
+  let srUsername = $state('');
+  let srPassword = $state('');
+  let srTlsMode = $state('starttls');
+  let srHasPassword = $state(false);
+
+  // Domain SMTP Relay modal
+  let domainRelayTarget = $state<MailDomain | null>(null);
+  let savingDomainRelay = $state(false);
+  let testingDomainRelay = $state(false);
+  let domainRelayError = $state('');
+  let drEnabled = $state(true);
+  let drProvider = $state('ses');
+  let drHost = $state('');
+  let drPort = $state(587);
+  let drUsername = $state('');
+  let drPassword = $state('');
 
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
@@ -248,6 +285,148 @@
       deletingMailbox = false;
     }
   }
+
+  function extractApiError(err: unknown): string {
+    if (err instanceof ApiError) {
+      const fieldMsg = err.errors.map((x) => `${x.field}: ${x.message}`).join('; ');
+      return fieldMsg || err.detail || err.title;
+    }
+    return i18n.t.common.errorGeneric;
+  }
+
+  function onServerProviderChange() {
+    const preset = RELAY_PRESETS[srProvider];
+    if (!preset) return;
+    if (preset.host) srHost = preset.host;
+    srPort = preset.port;
+    if (preset.user !== undefined) srUsername = preset.user;
+  }
+
+  function onDomainProviderChange() {
+    const preset = RELAY_PRESETS[drProvider];
+    if (!preset) return;
+    if (preset.host) drHost = preset.host;
+    drPort = preset.port;
+    if (preset.user !== undefined) drUsername = preset.user;
+  }
+
+  async function testRelayConnection(
+    host: string,
+    port: number,
+    setTesting: (v: boolean) => void,
+    setError: (msg: string) => void,
+  ) {
+    setError('');
+    setTesting(true);
+    try {
+      await api.post('/mail/relay/test', { host: host.trim(), port: Number(port) || 587 });
+      toast.success(i18n.t.mail.relayTestOk);
+    } catch (err) {
+      setError(extractApiError(err));
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function openServerRelay() {
+    serverRelayError = '';
+    srPassword = '';
+    serverRelayOpen = true;
+    loadingServerRelay = true;
+    try {
+      const cfg = await api.get<ServerSMTPRelay>('/mail/relay');
+      srEnabled = cfg.enabled;
+      srProvider = cfg.provider || 'ses';
+      srHost = cfg.host || '';
+      srPort = cfg.port || 587;
+      srUsername = cfg.username || '';
+      srTlsMode = cfg.tls_mode || 'starttls';
+      srHasPassword = cfg.has_password;
+      if (!srHost && RELAY_PRESETS[srProvider]?.host) {
+        srHost = RELAY_PRESETS[srProvider].host;
+      }
+    } catch (err) {
+      serverRelayError = extractApiError(err);
+    } finally {
+      loadingServerRelay = false;
+    }
+  }
+
+  async function submitServerRelay(e: SubmitEvent) {
+    e.preventDefault();
+    serverRelayError = '';
+    savingServerRelay = true;
+    try {
+      const res = await api.put<ServerSMTPRelay>('/mail/relay', {
+        enabled: srEnabled,
+        provider: srProvider,
+        host: srHost.trim(),
+        port: Number(srPort) || 587,
+        username: srUsername.trim(),
+        password: srPassword,
+        tls_mode: srTlsMode,
+      });
+      srHasPassword = res.has_password;
+      srPassword = '';
+      toast.success(i18n.t.mail.relaySaved);
+      serverRelayOpen = false;
+    } catch (err) {
+      serverRelayError = extractApiError(err);
+    } finally {
+      savingServerRelay = false;
+    }
+  }
+
+  function openDomainRelay(domain: MailDomain) {
+    domainRelayTarget = domain;
+    domainRelayError = '';
+    drEnabled = true;
+    drProvider = domain.relay_provider || 'ses';
+    drHost = domain.relay_host || RELAY_PRESETS[drProvider]?.host || '';
+    drPort = domain.relay_port || RELAY_PRESETS[drProvider]?.port || 587;
+    drUsername = domain.relay_user || '';
+    drPassword = '';
+  }
+
+  async function submitDomainRelay(e: SubmitEvent) {
+    e.preventDefault();
+    if (!domainRelayTarget) return;
+    domainRelayError = '';
+    savingDomainRelay = true;
+    try {
+      await api.put(`/mail/domains/${domainRelayTarget.id}/relay`, {
+        enabled: drEnabled,
+        provider: drProvider,
+        host: drHost.trim(),
+        port: Number(drPort) || 587,
+        username: drUsername.trim(),
+        password: drPassword,
+      });
+      toast.success(i18n.t.mail.relaySaved);
+      domainRelayTarget = null;
+      await loadDomains();
+    } catch (err) {
+      domainRelayError = extractApiError(err);
+    } finally {
+      savingDomainRelay = false;
+    }
+  }
+
+  async function clearDomainRelay() {
+    if (!domainRelayTarget) return;
+    domainRelayError = '';
+    savingDomainRelay = true;
+    try {
+      await api.put(`/mail/domains/${domainRelayTarget.id}/relay`, { enabled: false });
+      toast.success(i18n.t.mail.relaySaved);
+      domainRelayTarget = null;
+      await loadDomains();
+    } catch (err) {
+      domainRelayError = extractApiError(err);
+    } finally {
+      savingDomainRelay = false;
+    }
+  }
 </script>
 
 <div class="page-header">
@@ -263,7 +442,13 @@
 </div>
 
 <div class="toolbar">
-  <div></div>
+  <div>
+    {#if auth.user?.role === 'admin'}
+      <button type="button" class="btn btn-sm" onclick={openServerRelay}>
+        {i18n.t.mail.serverRelayBtn}
+      </button>
+    {/if}
+  </div>
   <button type="button" class="btn btn-sm" onclick={loadDomains} disabled={loadingDomains}>
     {i18n.t.common.refresh}
   </button>
@@ -295,6 +480,11 @@
               >
                 <strong>{d.domain}</strong>
               </button>
+              {#if d.relay_host}
+                <div>
+                  <span class="badge badge-info mono">{d.relay_host}:{d.relay_port || 587}</span>
+                </div>
+              {/if}
             </td>
             <td class="mono">{d.dkim_selector}</td>
             <td>{formatDateTime(d.created_at, localeCode)}</td>
@@ -310,6 +500,15 @@
                   <ActionIcon name="config" />
                 </button>
                 {#if canWrite}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.mail.domainRelayTitle}
+                    aria-label={i18n.t.mail.domainRelayTitle}
+                    onclick={() => openDomainRelay(d)}
+                  >
+                    <ActionIcon name="deploy" />
+                  </button>
                   <button
                     type="button"
                     class="btn btn-sm btn-icon btn-danger"
@@ -586,6 +785,256 @@
       disabled={deletingMailbox}
     >
       {deletingMailbox ? i18n.t.common.loading : i18n.t.common.delete}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={serverRelayOpen}
+  title={i18n.t.mail.serverRelayBtn}
+  onclose={() => (serverRelayOpen = false)}
+>
+  <form id="server-relay-form" onsubmit={submitServerRelay}>
+    {#if serverRelayError}
+      <div class="alert alert-danger" role="alert">{serverRelayError}</div>
+    {/if}
+
+    <div class="form-group">
+      <label class="checkbox-row">
+        <input type="checkbox" bind:checked={srEnabled} disabled={loadingServerRelay} />
+        <span>{i18n.t.mail.relayEnabled}</span>
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="sr-provider">{i18n.t.mail.relayProvider}</label>
+      <select
+        id="sr-provider"
+        class="form-control"
+        bind:value={srProvider}
+        onchange={onServerProviderChange}
+        disabled={loadingServerRelay}
+      >
+        {#each Object.entries(RELAY_PRESETS) as [key, preset] (key)}
+          <option value={key}>{preset.label}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="sr-host">{i18n.t.mail.relayHost}</label>
+        <input
+          id="sr-host"
+          type="text"
+          class="form-control"
+          bind:value={srHost}
+          required={srEnabled}
+          disabled={loadingServerRelay}
+          placeholder="smtp.example.com"
+        />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="sr-port">{i18n.t.mail.relayPort}</label>
+        <input
+          id="sr-port"
+          type="number"
+          min="1"
+          max="65535"
+          class="form-control"
+          bind:value={srPort}
+          required={srEnabled}
+          disabled={loadingServerRelay}
+        />
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="sr-tls">{i18n.t.mail.relayTls}</label>
+      <select
+        id="sr-tls"
+        class="form-control"
+        bind:value={srTlsMode}
+        disabled={loadingServerRelay}
+      >
+        <option value="starttls">STARTTLS (587)</option>
+        <option value="tls">TLS / SMTPS (465)</option>
+        <option value="none">None</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="sr-user">{i18n.t.mail.relayUser}</label>
+      <input
+        id="sr-user"
+        type="text"
+        class="form-control"
+        bind:value={srUsername}
+        disabled={loadingServerRelay}
+        autocomplete="off"
+      />
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="sr-pass">{i18n.t.mail.relayPass}</label>
+      <input
+        id="sr-pass"
+        type="password"
+        class="form-control"
+        bind:value={srPassword}
+        disabled={loadingServerRelay}
+        autocomplete="new-password"
+      />
+      {#if srHasPassword}
+        <div class="form-hint">{i18n.t.mail.relayPassHint}</div>
+      {/if}
+    </div>
+  </form>
+
+  {#snippet footer()}
+    <button
+      type="button"
+      class="btn"
+      onclick={() =>
+        testRelayConnection(
+          srHost,
+          srPort,
+          (v) => (testingServerRelay = v),
+          (msg) => (serverRelayError = msg),
+        )}
+      disabled={loadingServerRelay || testingServerRelay || !srHost.trim()}
+    >
+      {testingServerRelay ? i18n.t.common.loading : i18n.t.mail.relayTest}
+    </button>
+    <button type="button" class="btn" onclick={() => (serverRelayOpen = false)}>
+      {i18n.t.common.cancel}
+    </button>
+    <button
+      type="submit"
+      form="server-relay-form"
+      class="btn btn-primary"
+      disabled={loadingServerRelay || savingServerRelay}
+    >
+      {savingServerRelay ? i18n.t.common.loading : i18n.t.common.save}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={domainRelayTarget !== null}
+  title={`${i18n.t.mail.domainRelayTitle}${domainRelayTarget ? ` — ${domainRelayTarget.domain}` : ''}`}
+  onclose={() => (domainRelayTarget = null)}
+>
+  <form id="domain-relay-form" onsubmit={submitDomainRelay}>
+    {#if domainRelayError}
+      <div class="alert alert-danger" role="alert">{domainRelayError}</div>
+    {/if}
+
+    <div class="form-group">
+      <label class="checkbox-row">
+        <input type="checkbox" bind:checked={drEnabled} />
+        <span>{i18n.t.mail.relayEnabled}</span>
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="dr-provider">{i18n.t.mail.relayProvider}</label>
+      <select
+        id="dr-provider"
+        class="form-control"
+        bind:value={drProvider}
+        onchange={onDomainProviderChange}
+      >
+        {#each Object.entries(RELAY_PRESETS) as [key, preset] (key)}
+          <option value={key}>{preset.label}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="dr-host">{i18n.t.mail.relayHost}</label>
+        <input
+          id="dr-host"
+          type="text"
+          class="form-control"
+          bind:value={drHost}
+          required={drEnabled}
+          placeholder="smtp.example.com"
+        />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="dr-port">{i18n.t.mail.relayPort}</label>
+        <input
+          id="dr-port"
+          type="number"
+          min="1"
+          max="65535"
+          class="form-control"
+          bind:value={drPort}
+          required={drEnabled}
+        />
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="dr-user">{i18n.t.mail.relayUser}</label>
+      <input
+        id="dr-user"
+        type="text"
+        class="form-control"
+        bind:value={drUsername}
+        autocomplete="off"
+      />
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="dr-pass">{i18n.t.mail.relayPass}</label>
+      <input
+        id="dr-pass"
+        type="password"
+        class="form-control"
+        bind:value={drPassword}
+        autocomplete="new-password"
+      />
+      {#if domainRelayTarget?.relay_host}
+        <div class="form-hint">{i18n.t.mail.relayPassHint}</div>
+      {/if}
+    </div>
+  </form>
+
+  {#snippet footer()}
+    {#if domainRelayTarget?.relay_host}
+      <button
+        type="button"
+        class="btn btn-danger"
+        onclick={clearDomainRelay}
+        disabled={savingDomainRelay}
+      >
+        {i18n.t.mail.relayClear}
+      </button>
+    {/if}
+    <button
+      type="button"
+      class="btn"
+      onclick={() =>
+        testRelayConnection(
+          drHost,
+          drPort,
+          (v) => (testingDomainRelay = v),
+          (msg) => (domainRelayError = msg),
+        )}
+      disabled={testingDomainRelay || !drHost.trim()}
+    >
+      {testingDomainRelay ? i18n.t.common.loading : i18n.t.mail.relayTest}
+    </button>
+    <button type="button" class="btn" onclick={() => (domainRelayTarget = null)}>
+      {i18n.t.common.cancel}
+    </button>
+    <button type="submit" form="domain-relay-form" class="btn btn-primary" disabled={savingDomainRelay}>
+      {savingDomainRelay ? i18n.t.common.loading : i18n.t.common.save}
     </button>
   {/snippet}
 </Modal>

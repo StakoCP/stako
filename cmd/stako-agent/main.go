@@ -1157,6 +1157,12 @@ logfile /var/log/redis/redis-server-%s.log
 		domain, _ := req.Args["domain"].(string)
 		return runExec(resp, dryRun, logger, "stako-mail", "domain-del", domain)
 
+	case agentproto.CmdMailRelayApply:
+		if dryRun {
+			return runExec(resp, true, logger, "postmap", "/etc/postfix/sasl_passwd")
+		}
+		return applyPostfixRelays(resp, logger, req.Args)
+
 	case agentproto.CmdBackupRun:
 		id, _ := req.Args["id"].(string)
 		kind, _ := req.Args["kind"].(string)
@@ -2098,6 +2104,102 @@ server {
 `, phpSock, phpSock)
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	return os.WriteFile(p, []byte(conf), 0o644) == nil
+}
+
+func applyPostfixRelays(resp agentproto.Response, logger *slog.Logger, args map[string]any) agentproto.Response {
+	if _, err := os.Stat("/etc/postfix"); os.IsNotExist(err) {
+		resp.OK = true
+		resp.Output = "postfix not installed; relay settings saved in panel DB"
+		return resp
+	}
+
+	var saslLines []string
+	var senderLines []string
+	relayHost := ""
+	tlsLevel := "may"
+
+	if srv, ok := args["server_relay"].(map[string]any); ok {
+		enabled, _ := srv["enabled"].(bool)
+		host, _ := srv["host"].(string)
+		user, _ := srv["username"].(string)
+		pass, _ := srv["password"].(string)
+		tlsMode, _ := srv["tls_mode"].(string)
+		port := 587
+		if pf, ok := srv["port"].(float64); ok && pf > 0 {
+			port = int(pf)
+		}
+		if enabled && host != "" {
+			relayHost = fmt.Sprintf("[%s]:%d", host, port)
+			if tlsMode == "tls" || tlsMode == "starttls" {
+				tlsLevel = "encrypt"
+			}
+			if user != "" {
+				saslLines = append(saslLines, fmt.Sprintf("[%s]:%d %s:%s", host, port, user, pass))
+			}
+		}
+	}
+
+	if doms, ok := args["domain_relays"].([]any); ok {
+		for _, raw := range doms {
+			d, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			domain, _ := d["domain"].(string)
+			host, _ := d["host"].(string)
+			user, _ := d["username"].(string)
+			pass, _ := d["password"].(string)
+			port := 587
+			if pf, ok := d["port"].(float64); ok && pf > 0 {
+				port = int(pf)
+			}
+			if domain == "" || host == "" {
+				continue
+			}
+			senderLines = append(senderLines, fmt.Sprintf("@%s [%s]:%d", domain, host, port))
+			if user != "" {
+				saslLines = append(saslLines, fmt.Sprintf("@%s %s:%s", domain, user, pass))
+			}
+		}
+	}
+
+	saslPath := "/etc/postfix/sasl_passwd"
+	if err := os.WriteFile(saslPath, []byte(strings.Join(saslLines, "\n")+"\n"), 0o600); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	_ = exec.Command("postmap", saslPath).Run()
+
+	senderPath := "/etc/postfix/sender_relay"
+	if err := os.WriteFile(senderPath, []byte(strings.Join(senderLines, "\n")+"\n"), 0o644); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	_ = exec.Command("postmap", senderPath).Run()
+
+	postconfPairs := [][2]string{
+		{"relayhost", relayHost},
+		{"smtp_sasl_auth_enable", "yes"},
+		{"smtp_sasl_password_maps", "hash:/etc/postfix/sasl_passwd"},
+		{"smtp_sasl_security_options", "noanonymous"},
+		{"smtp_tls_security_level", tlsLevel},
+		{"smtp_sender_dependent_authentication", "yes"},
+		{"sender_dependent_relayhost_maps", "hash:/etc/postfix/sender_relay"},
+	}
+	if relayHost == "" && len(senderLines) == 0 {
+		postconfPairs = [][2]string{
+			{"relayhost", ""},
+			{"sender_dependent_relayhost_maps", ""},
+		}
+	}
+	for _, kv := range postconfPairs {
+		_ = exec.Command("postconf", "-e", kv[0]+"="+kv[1]).Run()
+	}
+
+	if r := runExec(resp, false, logger, "postfix", "check"); !r.OK {
+		return r
+	}
+	return runExec(resp, false, logger, "systemctl", "reload", "postfix")
 }
 
 func runSecurityScan() []map[string]any {

@@ -241,6 +241,11 @@ type MailDomain struct {
 	Domain        string    `json:"domain"`
 	DKIMSelector  string    `json:"dkim_selector"`
 	DKIMPublicKey string    `json:"dkim_public_key"`
+	RelayProvider string    `json:"relay_provider,omitempty"`
+	RelayHost     string    `json:"relay_host,omitempty"`
+	RelayPort     int       `json:"relay_port,omitempty"`
+	RelayUser     string    `json:"relay_user,omitempty"`
+	RelayPassEnc  string    `json:"-"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

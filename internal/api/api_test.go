@@ -467,6 +467,25 @@ func TestPhase4MailBackupsWebhooksAndLockdown(t *testing.T) {
 		t.Fatalf("mailbox = %d: %s", rec.Code, rec.Body.String())
 	}
 
+	// Configure server-wide and per-domain SMTP relay (smarthost)
+	rec = doReq(t, h, "PUT", "/api/v1/mail/relay", map[string]any{
+		"enabled": true, "provider": "ses", "host": "email-smtp.us-east-1.amazonaws.com",
+		"port": 587, "username": "AKIAEXAMPLE", "password": "secret-smtp-password", "tls_mode": "starttls",
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"has_password":true`)) || bytes.Contains(rec.Body.Bytes(), []byte("secret-smtp-password")) {
+		t.Fatalf("set server relay = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "GET", "/api/v1/mail/relay", nil, cookies, ""); rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("email-smtp.us-east-1.amazonaws.com")) {
+		t.Fatalf("get server relay = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "PUT", "/api/v1/mail/domains/"+mdResp.MailDomain.ID+"/relay", map[string]any{
+		"enabled": true, "provider": "brevo", "host": "smtp-relay.brevo.com",
+		"port": 587, "username": "user@example.com", "password": "brevo-secret",
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("smtp-relay.brevo.com")) {
+		t.Fatalf("set domain relay = %d: %s", rec.Code, rec.Body.String())
+	}
+
 	// System config backup
 	rec = doReq(t, h, "POST", "/api/v1/backups", map[string]any{"kind": "system_config", "target": "s3"}, cookies, csrf)
 	if rec.Code != 201 {

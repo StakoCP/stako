@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/StakoCP/stako/internal/agentproto"
 	"github.com/StakoCP/stako/internal/crypto"
@@ -279,6 +280,254 @@ func (s *Server) handleDeleteMailbox(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, ac.User, "mail.mailbox_delete", "mailbox", mb.ID, "success", nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type serverRelayConfig struct {
+	Enabled     bool   `json:"enabled"`
+	Provider    string `json:"provider"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Username    string `json:"username"`
+	PasswordEnc string `json:"password_enc,omitempty"`
+	TLSMode     string `json:"tls_mode"`
+}
+
+func validateRelayHost(host string) error {
+	h := strings.TrimSpace(host)
+	if h == "" || strings.ContainsAny(h, " \t\n\r/\\:;|&$`\"'<>") {
+		return fmt.Errorf("invalid SMTP relay host")
+	}
+	return nil
+}
+
+func (s *Server) applyAllMailRelays(ctx context.Context) error {
+	var srv serverRelayConfig
+	if raw, err := s.store.GetSetting(ctx, "smtp_relay_server"); err == nil && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &srv)
+	}
+	srvPass := ""
+	if srv.PasswordEnc != "" {
+		srvPass, _ = s.enc.Decrypt(srv.PasswordEnc)
+	}
+	doms, err := s.store.ListMailDomains(ctx, nil, nil)
+	if err != nil {
+		return err
+	}
+	domRelays := make([]map[string]any, 0)
+	for _, d := range doms {
+		if d.RelayHost == "" {
+			continue
+		}
+		p := ""
+		if d.RelayPassEnc != "" {
+			p, _ = s.enc.Decrypt(d.RelayPassEnc)
+		}
+		domRelays = append(domRelays, map[string]any{
+			"domain":   d.Domain,
+			"host":     d.RelayHost,
+			"port":     d.RelayPort,
+			"username": d.RelayUser,
+			"password": p,
+		})
+	}
+	resp, err := s.agent.Call(ctx, agentproto.CmdMailRelayApply, map[string]any{
+		"server_relay": map[string]any{
+			"enabled":  srv.Enabled,
+			"host":     srv.Host,
+			"port":     srv.Port,
+			"username": srv.Username,
+			"password": srvPass,
+			"tls_mode": srv.TLSMode,
+		},
+		"domain_relays": domRelays,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("%s %s", resp.Error, resp.Output)
+	}
+	return nil
+}
+
+func (s *Server) handleGetServerRelay(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
+		return
+	}
+	cfg := serverRelayConfig{Provider: "ses", Port: 587, TLSMode: "starttls"}
+	if raw, err := s.store.GetSetting(r.Context(), "smtp_relay_server"); err == nil && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg)
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"enabled":      cfg.Enabled,
+		"provider":     cfg.Provider,
+		"host":         cfg.Host,
+		"port":         cfg.Port,
+		"username":     cfg.Username,
+		"tls_mode":     cfg.TLSMode,
+		"has_password": cfg.PasswordEnc != "",
+	})
+}
+
+func (s *Server) handleSetServerRelay(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role != "admin" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Admin only", "")
+		return
+	}
+	var req struct {
+		Enabled  bool   `json:"enabled"`
+		Provider string `json:"provider"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		TLSMode  string `json:"tls_mode"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "custom"
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		req.Port = 587
+	}
+	if req.TLSMode == "" {
+		req.TLSMode = "starttls"
+	}
+	if req.Enabled {
+		if err := validateRelayHost(req.Host); err != nil {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+			return
+		}
+	}
+	var prev serverRelayConfig
+	if raw, err := s.store.GetSetting(r.Context(), "smtp_relay_server"); err == nil && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &prev)
+	}
+	passEnc := prev.PasswordEnc
+	if req.Password != "" {
+		passEnc, _ = s.enc.Encrypt(req.Password)
+	}
+	cfg := serverRelayConfig{
+		Enabled:     req.Enabled,
+		Provider:    req.Provider,
+		Host:        strings.TrimSpace(req.Host),
+		Port:        req.Port,
+		Username:    strings.TrimSpace(req.Username),
+		PasswordEnc: passEnc,
+		TLSMode:     req.TLSMode,
+	}
+	b, _ := json.Marshal(cfg)
+	if err := s.store.SetSetting(r.Context(), "smtp_relay_server", string(b)); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if err := s.applyAllMailRelays(r.Context()); err != nil {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to apply SMTP relay", err.Error())
+		return
+	}
+	s.audit(r, ac.User, "mail.relay_server", "mail", "server", "success", map[string]any{"enabled": cfg.Enabled, "host": cfg.Host})
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"enabled": cfg.Enabled, "provider": cfg.Provider, "host": cfg.Host, "port": cfg.Port,
+		"username": cfg.Username, "tls_mode": cfg.TLSMode, "has_password": cfg.PasswordEnc != "",
+	})
+}
+
+func (s *Server) handleSetDomainRelay(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	md, err := s.store.GetMailDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, md.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Enabled  bool   `json:"enabled"`
+		Provider string `json:"provider"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	if !req.Enabled {
+		if err := s.store.UpdateMailDomainRelay(r.Context(), md.ID, "", "", 0, "", ""); err != nil {
+			handleStoreErr(w, err)
+			return
+		}
+	} else {
+		if err := validateRelayHost(req.Host); err != nil {
+			WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+			return
+		}
+		if req.Port <= 0 || req.Port > 65535 {
+			req.Port = 587
+		}
+		if req.Provider == "" {
+			req.Provider = "custom"
+		}
+		passEnc := md.RelayPassEnc
+		if req.Password != "" {
+			passEnc, _ = s.enc.Encrypt(req.Password)
+		}
+		if err := s.store.UpdateMailDomainRelay(r.Context(), md.ID, req.Provider, strings.TrimSpace(req.Host), req.Port, strings.TrimSpace(req.Username), passEnc); err != nil {
+			handleStoreErr(w, err)
+			return
+		}
+	}
+	if err := s.applyAllMailRelays(r.Context()); err != nil {
+		WriteProblem(w, http.StatusInternalServerError, "internal", "Failed to apply domain SMTP relay", err.Error())
+		return
+	}
+	updated, _ := s.store.GetMailDomain(r.Context(), md.ID)
+	s.audit(r, ac.User, "mail.relay_domain", "mail_domain", md.ID, "success", map[string]any{"enabled": req.Enabled, "host": req.Host})
+	WriteJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) handleTestRelay(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	if err := validateRelayHost(req.Host); err != nil {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", err.Error(), "")
+		return
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		req.Port = 587
+	}
+	addr := net.JoinHostPort(strings.TrimSpace(req.Host), fmt.Sprintf("%d", req.Port))
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		WriteProblem(w, http.StatusBadGateway, "relay-unreachable", "Cannot connect to SMTP relay", err.Error())
+		return
+	}
+	_ = conn.Close()
+	WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "address": addr})
 }
 
 // --- Backups (7.12, 7.19) ---

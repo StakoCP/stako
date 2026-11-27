@@ -197,6 +197,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/mail/domains/{id}/mailboxes", s.requireAuth(s.handleListMailboxes))
 	mux.HandleFunc("POST /api/v1/mail/domains/{id}/mailboxes", s.requireAuth(s.handleCreateMailbox))
 	mux.HandleFunc("DELETE /api/v1/mail/mailboxes/{id}", s.requireAuth(s.handleDeleteMailbox))
+	mux.HandleFunc("GET /api/v1/mail/relay", s.requireAuth(s.handleGetServerRelay))
+	mux.HandleFunc("PUT /api/v1/mail/relay", s.requireAuth(s.handleSetServerRelay))
+	mux.HandleFunc("PUT /api/v1/mail/domains/{id}/relay", s.requireAuth(s.handleSetDomainRelay))
+	mux.HandleFunc("POST /api/v1/mail/relay/test", s.requireAuth(s.handleTestRelay))
 
 	// Backups (7.12, 7.19)
 	mux.HandleFunc("GET /api/v1/backups", s.requireAuth(s.handleListBackups))
