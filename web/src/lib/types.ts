@@ -556,6 +556,24 @@ export interface GitDeploy {
   created_at: string;
 }
 
+export interface GitPreview {
+  id: string;
+  git_deploy_id: string;
+  user_id: string;
+  domain_id: string;
+  subdomain: string;
+  branch: string;
+  pr_number: number;
+  image: string;
+  container_name: string;
+  host_port: number;
+  container_port: number;
+  preview_domain_id: string;
+  status: string;
+  last_deployed_at: string;
+  created_at: string;
+}
+
 export type ServerNodeRole = 'worker' | 'db' | 'mail';
 
 export interface ServerNode {

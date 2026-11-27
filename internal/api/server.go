@@ -265,11 +265,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/waf", s.requireAuth(s.handleGetWAF))
 	mux.HandleFunc("POST /api/v1/waf", s.requireAuth(s.handleSetWAF))
 
-	// Git Deploy (7.3 FR-P8)
+	// Git Deploy & Preview Environments (7.3 FR-P8)
 	mux.HandleFunc("GET /api/v1/git-deploys", s.requireAuth(s.handleListGitDeploys))
 	mux.HandleFunc("POST /api/v1/git-deploys", s.requireAuth(s.handleCreateGitDeploy))
 	mux.HandleFunc("POST /api/v1/git-deploys/{id}/trigger", s.requireAuth(s.handleTriggerGitDeploy))
 	mux.HandleFunc("DELETE /api/v1/git-deploys/{id}", s.requireAuth(s.handleDeleteGitDeploy))
+	mux.HandleFunc("GET /api/v1/git-previews", s.requireAuth(s.handleListGitPreviews))
+	mux.HandleFunc("POST /api/v1/git-deploys/{id}/previews", s.requireAuth(s.handleCreateGitPreview))
+	mux.HandleFunc("POST /api/v1/git-previews/{id}/redeploy", s.requireAuth(s.handleRedeployGitPreview))
+	mux.HandleFunc("DELETE /api/v1/git-previews/{id}", s.requireAuth(s.handleDeleteGitPreview))
 
 	// Multi-Server Nodes & Panel Import / Migrations (7.13)
 	mux.HandleFunc("GET /api/v1/nodes", s.requireAuth(s.handleListNodes))

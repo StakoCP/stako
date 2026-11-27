@@ -1077,3 +1077,87 @@ func TestUptimeMonitoringAndPublicStatusPage(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestGitPreviewEnvironments(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Create domain + git deploy target
+	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{
+		"domain": "previewapp.example.com", "stack": "nginx_apache", "template": "php",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create domain = %d: %s", rec.Code, rec.Body.String())
+	}
+	var domResp struct {
+		Domain struct {
+			ID string `json:"id"`
+		} `json:"domain"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &domResp)
+
+	rec = doReq(t, h, "POST", "/api/v1/git-deploys", map[string]any{
+		"domain_id": domResp.Domain.ID,
+		"repo_url":  "https://github.com/example/webapp.git",
+		"branch":    "main",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create git deploy = %d: %s", rec.Code, rec.Body.String())
+	}
+	var gdResp struct {
+		Deploy struct {
+			ID string `json:"id"`
+		} `json:"deploy"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &gdResp)
+
+	// Create PR preview environment
+	rec = doReq(t, h, "POST", "/api/v1/git-deploys/"+gdResp.Deploy.ID+"/previews", map[string]any{
+		"branch":         "feat/new-ui",
+		"pr_number":      42,
+		"container_port": 3000,
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create preview = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"subdomain":"pr-42.previewapp.example.com"`)) {
+		t.Fatalf("expected subdomain pr-42.previewapp.example.com, got %s", rec.Body.String())
+	}
+	var prevResp struct {
+		Preview struct {
+			ID string `json:"id"`
+		} `json:"preview"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &prevResp)
+
+	// List previews
+	if rec := doReq(t, h, "GET", "/api/v1/git-previews", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("list previews = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Redeploy preview
+	if rec := doReq(t, h, "POST", "/api/v1/git-previews/"+prevResp.Preview.ID+"/redeploy", nil, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("redeploy preview = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Delete preview
+	if rec := doReq(t, h, "DELETE", "/api/v1/git-previews/"+prevResp.Preview.ID, nil, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("delete preview = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

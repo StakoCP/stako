@@ -158,6 +158,10 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdWAFApply
 	case "git.deploy":
 		cmd = agentproto.CmdGitDeploy
+	case "git.preview_deploy":
+		cmd = agentproto.CmdGitPreviewDeploy
+	case "git.preview_delete":
+		cmd = agentproto.CmdGitPreviewDelete
 	case "panel.import":
 		cmd = agentproto.CmdPanelImport
 	case "migration.export":

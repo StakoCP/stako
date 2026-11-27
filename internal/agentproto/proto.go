@@ -85,6 +85,8 @@ const (
 	CmdMigrationExport      = "migration.export"
 	CmdMigrationTransfer    = "migration.transfer"
 	CmdMigrationListBundles = "migration.list_bundles"
+	CmdGitPreviewDeploy     = "git.preview_deploy"
+	CmdGitPreviewDelete     = "git.preview_delete"
 )
 
 type Request struct {

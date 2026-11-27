@@ -178,6 +178,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateUptime(); err != nil {
 		return err
 	}
+	if err := s.migrateGitPreviews(); err != nil {
+		return err
+	}
 	return s.seedDefaultPackages()
 }
 

@@ -1525,6 +1525,71 @@ logfile /var/log/redis/redis-server-%s.log
 		resp.Output = "deployed " + repo + "@" + branch + " to " + targetDir
 		return resp
 
+	case agentproto.CmdGitPreviewDeploy:
+		previewID, _ := req.Args["preview_id"].(string)
+		repo, _ := req.Args["repo_url"].(string)
+		branch, _ := req.Args["branch"].(string)
+		username, _ := req.Args["username"].(string)
+		containerName, _ := req.Args["container_name"].(string)
+		image, _ := req.Args["image"].(string)
+		buildCmd, _ := req.Args["build_cmd"].(string)
+		hostPort := 18001
+		if hp, ok := req.Args["host_port"].(float64); ok && hp > 0 {
+			hostPort = int(hp)
+		}
+		containerPort := 3000
+		if cp, ok := req.Args["container_port"].(float64); ok && cp > 0 {
+			containerPort = int(cp)
+		}
+		if branch == "" {
+			branch = "main"
+		}
+		if image == "" {
+			image = "node:20-alpine"
+		}
+		if dryRun || username == "" || agentproto.ValidateLinuxUsername(username) != nil {
+			return runExec(resp, true, logger, "docker", "run", "-d", "--name", containerName, "-p", fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort), image)
+		}
+		previewDir := filepath.Join("/home", username, "previews", previewID)
+		_ = os.MkdirAll(filepath.Dir(previewDir), 0o750)
+		if _, err := os.Stat(filepath.Join(previewDir, ".git")); err == nil {
+			_ = exec.Command("sudo", "-u", username, "git", "-C", previewDir, "fetch", "origin", branch).Run()
+			_ = exec.Command("sudo", "-u", username, "git", "-C", previewDir, "checkout", "-f", branch).Run()
+			_ = exec.Command("sudo", "-u", username, "git", "-C", previewDir, "reset", "--hard", "origin/"+branch).Run()
+		} else {
+			if r := runExec(resp, false, logger, "sudo", "-u", username, "git", "clone", "--depth", "1", "-b", branch, repo, previewDir); !r.OK {
+				return r
+			}
+		}
+		_ = exec.Command("docker", "rm", "-f", containerName).Run()
+		portMap := fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort)
+		if _, err := os.Stat(filepath.Join(previewDir, "Dockerfile")); err == nil {
+			imgTag := containerName + ":latest"
+			if r := runExec(resp, false, logger, "docker", "build", "-t", imgTag, previewDir); !r.OK {
+				return r
+			}
+			return runExec(resp, false, logger, "docker", "run", "-d", "--name", containerName, "--restart", "unless-stopped", "-p", portMap, imgTag)
+		}
+		if strings.TrimSpace(buildCmd) != "" {
+			_ = exec.Command("sudo", "-u", username, "bash", "-lc", "cd "+previewDir+" && "+buildCmd).Run()
+		}
+		return runExec(resp, false, logger, "docker", "run", "-d", "--name", containerName, "--restart", "unless-stopped", "-p", portMap, "-v", previewDir+":/app", "-w", "/app", image)
+
+	case agentproto.CmdGitPreviewDelete:
+		previewID, _ := req.Args["preview_id"].(string)
+		username, _ := req.Args["username"].(string)
+		containerName, _ := req.Args["container_name"].(string)
+		if dryRun {
+			return runExec(resp, true, logger, "docker", "rm", "-f", containerName)
+		}
+		_ = exec.Command("docker", "rm", "-f", containerName).Run()
+		if username != "" && previewID != "" && agentproto.ValidateLinuxUsername(username) == nil && !strings.Contains(previewID, "..") {
+			_ = os.RemoveAll(filepath.Join("/home", username, "previews", previewID))
+		}
+		resp.OK = true
+		resp.Output = "removed preview container " + containerName
+		return resp
+
 	case agentproto.CmdPanelImport:
 		return runPanelImport(resp, dryRun, logger, req.Args)
 
