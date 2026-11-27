@@ -207,6 +207,7 @@ func (s *Server) Handler() http.Handler {
 	// Mail Server (7.6)
 	mux.HandleFunc("GET /api/v1/mail/domains", s.requireAuth(s.handleListMailDomains))
 	mux.HandleFunc("POST /api/v1/mail/domains", s.requireAuth(s.handleCreateMailDomain))
+	mux.HandleFunc("GET /api/v1/mail/domains/{id}/dns", s.requireAuth(s.handleGetMailDNS))
 	mux.HandleFunc("DELETE /api/v1/mail/domains/{id}", s.requireAuth(s.handleDeleteMailDomain))
 	mux.HandleFunc("GET /api/v1/mail/domains/{id}/mailboxes", s.requireAuth(s.handleListMailboxes))
 	mux.HandleFunc("POST /api/v1/mail/domains/{id}/mailboxes", s.requireAuth(s.handleCreateMailbox))
@@ -376,6 +377,10 @@ func (s *Server) Handler() http.Handler {
 			http.Redirect(w, r, "/phppgadmin/", http.StatusMovedPermanently)
 		})
 		mux.Handle("/phppgadmin/", dbProxy)
+		mux.HandleFunc("/webmail", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/webmail/", http.StatusMovedPermanently)
+		})
+		mux.Handle("/webmail/", dbProxy)
 	}
 
 	// Static Web UI with SPA fallback

@@ -164,6 +164,33 @@ func (s *Server) handleCreateMailDomain(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *Server) handleGetMailDNS(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	md, err := s.store.GetMailDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	if !s.canAccessOwned(r, ac, md.UserID) {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	selector := md.DKIMSelector
+	if selector == "" {
+		selector = "default"
+	}
+	dnsRecords := []map[string]string{
+		{"type": "MX", "name": md.Domain, "value": "10 mail." + md.Domain},
+		{"type": "TXT", "name": md.Domain, "value": "v=spf1 mx a ~all"},
+		{"type": "TXT", "name": selector + "._domainkey." + md.Domain, "value": md.DKIMPublicKey},
+		{"type": "TXT", "name": "_dmarc." + md.Domain, "value": "v=DMARC1; p=quarantine; rua=mailto:postmaster@" + md.Domain},
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"mail_domain": md,
+		"dns_records": dnsRecords,
+	})
+}
+
 func (s *Server) handleDeleteMailDomain(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	if ac.User.Role == "readonly" {

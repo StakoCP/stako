@@ -50,7 +50,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		corrID, _ := crypto.RandomHex(8)
 		ctx := context.WithValue(r.Context(), ctxCorrIDKey, corrID)
 		w.Header().Set("X-Request-Id", corrID)
-		if !strings.HasPrefix(r.URL.Path, "/phpmyadmin") && !strings.HasPrefix(r.URL.Path, "/phppgadmin") {
+		if !strings.HasPrefix(r.URL.Path, "/phpmyadmin") && !strings.HasPrefix(r.URL.Path, "/phppgadmin") && !strings.HasPrefix(r.URL.Path, "/webmail") {
 			w.Header().Set("Content-Security-Policy",
 				"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		}

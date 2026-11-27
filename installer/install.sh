@@ -207,7 +207,14 @@ install_backend_stack() {
         nodejs) ensure_pkg "nodejs" "20.0" ;;
         docker) ensure_pkg "docker-ce" "5:24.0" "docker.io containerd runc"; ensure_pkg "docker-compose-plugin" "2.0" ;;
         redis-server) ensure_pkg "redis-server" "5:6.0" ;;
-        mail) ensure_pkg "postfix" "3.6"; ensure_pkg "dovecot-core" "1:2.3"; ensure_pkg "dovecot-imapd" "1:2.3"; ensure_pkg "rspamd" "3.0" ;;
+        mail)
+          ensure_pkg "postfix" "3.6"; ensure_pkg "dovecot-core" "1:2.3"; ensure_pkg "dovecot-imapd" "1:2.3"; ensure_pkg "rspamd" "3.0"
+          if [[ "$DRY_RUN" -eq 0 ]]; then
+            echo "roundcube-core roundcube/dbconfig-install boolean true" | debconf-set-selections || true
+            echo "roundcube-core roundcube/database-type select sqlite3" | debconf-set-selections || true
+            apt-get install -y roundcube roundcube-core roundcube-sqlite3 || true
+          fi
+          ;;
         proftpd-basic) ensure_pkg "proftpd-basic" "1.3" "vsftpd" ;;
         restic) ensure_pkg "restic" "0.14" ;;
         multiphp) ensure_pkg "php8.3-fpm" "8.3"; ensure_pkg "php8.5-fpm" "8.5" ;;
@@ -239,6 +246,11 @@ install_backend_stack() {
   ensure_pkg "dovecot-core" "1:2.3"
   ensure_pkg "dovecot-imapd" "1:2.3"
   ensure_pkg "rspamd" "3.0"
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    echo "roundcube-core roundcube/dbconfig-install boolean true" | debconf-set-selections || true
+    echo "roundcube-core roundcube/database-type select sqlite3" | debconf-set-selections || true
+    apt-get install -y roundcube roundcube-core roundcube-sqlite3 || true
+  fi
   ensure_pkg "proftpd-basic" "1.3" "vsftpd"
   ensure_pkg "restic" "0.14"
 

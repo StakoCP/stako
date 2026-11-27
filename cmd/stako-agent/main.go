@@ -2225,7 +2225,11 @@ func ensureDBAdminToolsNginx() bool {
 			break
 		}
 	}
-	conf := fmt.Sprintf(`# Managed by Stako: local phpMyAdmin & phpPgAdmin backend for :8083 proxy
+	roundcubeRoot := "/var/lib/roundcube/public_html/"
+	if _, err := os.Stat(roundcubeRoot); err != nil {
+		roundcubeRoot = "/usr/share/roundcube/"
+	}
+	conf := fmt.Sprintf(`# Managed by Stako: local phpMyAdmin, phpPgAdmin & Roundcube backend for :8083 proxy
 server {
     listen 127.0.0.1:8084;
     server_name localhost;
@@ -2252,8 +2256,19 @@ server {
             fastcgi_pass unix:%s;
         }
     }
+
+    location ^~ /webmail/ {
+        alias %s;
+        index index.php index.html;
+        location ~ ^/webmail/(.+\.php)$ {
+            alias %s$1;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+            fastcgi_pass unix:%s;
+        }
+    }
 }
-`, phpSock, phpSock)
+`, phpSock, phpSock, roundcubeRoot, roundcubeRoot, phpSock)
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	return os.WriteFile(p, []byte(conf), 0o644) == nil
 }

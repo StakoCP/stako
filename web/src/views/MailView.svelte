@@ -45,11 +45,22 @@
   let domainFormError = $state('');
   let savingDomain = $state(false);
 
-  // DNS Records modal (shown once after POST /mail/domains)
+  // DNS Records modal (shown after POST /mail/domains or via DNS / DKIM button)
   let dnsRecordsModalOpen = $state(false);
   let createdDnsDomain = $state('');
   let createdDnsRecords = $state<MailDnsRecord[]>([]);
   let copiedDnsIndex = $state<number | null>(null);
+  let loadingDns = $state(false);
+
+  // Client Config (IMAP/SMTP) modal
+  let clientConfigOpen = $state(false);
+  let clientMailHost = $derived(
+    selectedDomain
+      ? `mail.${selectedDomain.domain}`
+      : typeof window !== 'undefined'
+        ? window.location.hostname
+        : 'mail.example.com',
+  );
 
   // Delete Mail Domain modal
   let deleteDomainTarget = $state<MailDomain | null>(null);
@@ -208,6 +219,52 @@
       toast.success(i18n.t.common.copied);
     } catch {
       toast.error(i18n.t.common.errorGeneric);
+    }
+  }
+
+  async function copyText(value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(i18n.t.common.copied);
+    } catch {
+      toast.error(i18n.t.common.errorGeneric);
+    }
+  }
+
+  async function openDnsRecords(domain: MailDomain) {
+    loadingDns = true;
+    try {
+      const res = await api.get<{ records?: MailDnsRecord[]; dns_records?: MailDnsRecord[] }>(
+        `/mail/domains/${domain.id}/dns`,
+      );
+      createdDnsDomain = domain.domain;
+      createdDnsRecords = res.dns_records ?? res.records ?? [];
+      copiedDnsIndex = null;
+      dnsRecordsModalOpen = true;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404 && domain.dkim_public_key) {
+        const selector = domain.dkim_selector || 'default';
+        createdDnsDomain = domain.domain;
+        createdDnsRecords = [
+          { type: 'TXT', name: domain.domain, value: 'v=spf1 mx a ~all' },
+          {
+            type: 'TXT',
+            name: `${selector}._domainkey.${domain.domain}`,
+            value: domain.dkim_public_key,
+          },
+          {
+            type: 'TXT',
+            name: `_dmarc.${domain.domain}`,
+            value: `v=DMARC1; p=quarantine; rua=mailto:postmaster@${domain.domain}`,
+          },
+        ];
+        copiedDnsIndex = null;
+        dnsRecordsModalOpen = true;
+      } else {
+        toast.error(extractApiError(err));
+      }
+    } finally {
+      loadingDns = false;
     }
   }
 
@@ -442,12 +499,18 @@
 </div>
 
 <div class="toolbar">
-  <div>
+  <div class="table-actions">
     {#if auth.user?.role === 'admin'}
       <button type="button" class="btn btn-sm" onclick={openServerRelay}>
         {i18n.t.mail.serverRelayBtn}
       </button>
     {/if}
+    <a class="btn btn-sm" href="/webmail/" target="_blank" rel="noopener noreferrer">
+      {i18n.t.mail.webmailBtn}
+    </a>
+    <button type="button" class="btn btn-sm" onclick={() => (clientConfigOpen = true)}>
+      {i18n.t.mail.clientConfigBtn}
+    </button>
   </div>
   <button type="button" class="btn btn-sm" onclick={loadDomains} disabled={loadingDomains}>
     {i18n.t.common.refresh}
@@ -493,6 +556,16 @@
                 <button
                   type="button"
                   class="btn btn-sm btn-icon"
+                  title={i18n.t.mail.viewDnsBtn}
+                  aria-label={i18n.t.mail.viewDnsBtn}
+                  onclick={() => openDnsRecords(d)}
+                  disabled={loadingDns}
+                >
+                  <ActionIcon name="key" />
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
                   title={i18n.t.mail.manageMailboxes}
                   aria-label={i18n.t.mail.manageMailboxes}
                   onclick={() => selectDomain(d)}
@@ -534,6 +607,15 @@
     <div class="toolbar">
       <h2 class="card-title">{fmt(i18n.t.mail.mailboxesFor, { domain: selectedDomain.domain })}</h2>
       <div class="table-actions">
+        <button
+          type="button"
+          class="btn btn-sm"
+          onclick={() => selectedDomain && openDnsRecords(selectedDomain)}
+          disabled={loadingDns}
+        >
+          <ActionIcon name="key" />
+          {i18n.t.mail.viewDnsBtn}
+        </button>
         <button
           type="button"
           class="btn btn-sm"
@@ -1035,6 +1117,83 @@
     </button>
     <button type="submit" form="domain-relay-form" class="btn btn-primary" disabled={savingDomainRelay}>
       {savingDomainRelay ? i18n.t.common.loading : i18n.t.common.save}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={clientConfigOpen}
+  title={i18n.t.mail.clientConfigTitle}
+  size="lg"
+  onclose={() => (clientConfigOpen = false)}
+>
+  <div class="grid-two">
+    <div class="card">
+      <h3 class="card-title">{i18n.t.mail.imapSection}</h3>
+      <dl class="kv-list">
+        <dt>{i18n.t.mail.serverHost}</dt>
+        <dd>
+          <span class="table-actions">
+            <span class="mono">{clientMailHost}</span>
+            <button
+              type="button"
+              class="btn btn-sm btn-icon"
+              title={i18n.t.common.copy}
+              aria-label={i18n.t.common.copy}
+              onclick={() => copyText(clientMailHost)}
+            >
+              <ActionIcon name="copy" />
+            </button>
+          </span>
+        </dd>
+        <dt>{i18n.t.mail.relayPort}</dt>
+        <dd>
+          <span class="badge badge-info mono">993</span>
+          <span>{i18n.t.mail.portSslTls}</span>
+          /
+          <span class="badge badge-info mono">143</span>
+          <span>{i18n.t.mail.portStartTls}</span>
+        </dd>
+        <dt>{i18n.t.mail.relayUser}</dt>
+        <dd>{i18n.t.mail.usernameHint}</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title">{i18n.t.mail.smtpSection}</h3>
+      <dl class="kv-list">
+        <dt>{i18n.t.mail.serverHost}</dt>
+        <dd>
+          <span class="table-actions">
+            <span class="mono">{clientMailHost}</span>
+            <button
+              type="button"
+              class="btn btn-sm btn-icon"
+              title={i18n.t.common.copy}
+              aria-label={i18n.t.common.copy}
+              onclick={() => copyText(clientMailHost)}
+            >
+              <ActionIcon name="copy" />
+            </button>
+          </span>
+        </dd>
+        <dt>{i18n.t.mail.relayPort}</dt>
+        <dd>
+          <span class="badge badge-info mono">465</span>
+          <span>{i18n.t.mail.portSslTls}</span>
+          /
+          <span class="badge badge-info mono">587</span>
+          <span>{i18n.t.mail.portStartTls}</span>
+        </dd>
+        <dt>{i18n.t.mail.relayUser}</dt>
+        <dd>{i18n.t.mail.authRequired}</dd>
+      </dl>
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <button type="button" class="btn btn-primary" onclick={() => (clientConfigOpen = false)}>
+      {i18n.t.common.close}
     </button>
   {/snippet}
 </Modal>
