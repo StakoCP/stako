@@ -81,6 +81,9 @@ func main() {
 	logger.Info("stako-agent listening", "sock", *sockPath, "dry_run", *dryRun)
 
 	if !*dryRun {
+		if _, err := os.Stat("/etc/postfix"); err == nil {
+			ensureRoundcubeInstalled(logger)
+		}
 		if st, err := os.Stat("/etc/nginx/conf.d"); err == nil && st.IsDir() {
 			changed := ensureNginxCloudflareRealIP()
 			if ensureDBAdminToolsNginx() {
@@ -2516,19 +2519,25 @@ func ensureApacheCloudflareRealIP() {
 
 func ensureDBAdminToolsNginx() bool {
 	p := "/etc/nginx/conf.d/stako-dbtools.conf"
-	if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), "/webmail/") {
-		return false
-	}
 	phpSock := "/run/php/php8.4-fpm.sock"
-	for _, cand := range []string{"/run/php/php8.4-fpm.sock", "/run/php/php8.3-fpm.sock", "/run/php/php8.5-fpm.sock", "/run/php/php-fpm.sock"} {
+	for _, cand := range []string{"/run/php/php8.4-fpm.sock", "/run/php/php8.3-fpm.sock", "/run/php/php8.2-fpm.sock", "/run/php/php8.5-fpm.sock", "/run/php/php-fpm.sock"} {
 		if _, err := os.Stat(cand); err == nil {
 			phpSock = cand
 			break
 		}
 	}
 	roundcubeRoot := "/var/lib/roundcube/public_html/"
-	if _, err := os.Stat(roundcubeRoot); err != nil {
-		roundcubeRoot = "/usr/share/roundcube/"
+	for _, cand := range []string{
+		"/var/lib/roundcube/public_html/",
+		"/usr/share/roundcube/public_html/",
+		"/usr/share/roundcube/",
+		"/var/www/roundcube/public_html/",
+		"/var/www/roundcube/",
+	} {
+		if _, err := os.Stat(filepath.Join(cand, "index.php")); err == nil {
+			roundcubeRoot = cand
+			break
+		}
 	}
 	conf := fmt.Sprintf(`# Managed by Stako: local phpMyAdmin, phpPgAdmin & Roundcube backend for :8083 proxy
 server {
@@ -2561,6 +2570,7 @@ server {
     location ^~ /webmail/ {
         alias %s;
         index index.php index.html;
+        try_files $uri $uri/ /webmail/index.php?$args;
         location ~ ^/webmail/(.+\.php)$ {
             alias %s$1;
             include fastcgi_params;
@@ -2570,8 +2580,32 @@ server {
     }
 }
 `, phpSock, phpSock, roundcubeRoot, roundcubeRoot, phpSock)
+	if b, err := os.ReadFile(p); err == nil && string(b) == conf {
+		return false
+	}
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	return os.WriteFile(p, []byte(conf), 0o644) == nil
+}
+
+func ensureRoundcubeInstalled(logger *slog.Logger) {
+	for _, cand := range []string{
+		"/var/lib/roundcube/public_html/index.php",
+		"/usr/share/roundcube/public_html/index.php",
+		"/usr/share/roundcube/index.php",
+	} {
+		if _, err := os.Stat(cand); err == nil {
+			return
+		}
+	}
+	if _, err := exec.LookPath("apt-get"); err != nil {
+		return
+	}
+	logger.Info("installing roundcube webmail package")
+	cmd := exec.Command("apt-get", "install", "-y", "-qq", "roundcube", "roundcube-sqlite3")
+	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		logger.Warn("roundcube install failed", "err", err, "output", strings.TrimSpace(string(out)))
+	}
 }
 
 func applyMailDomain(resp agentproto.Response, dryRun bool, logger *slog.Logger, domain string, add bool) agentproto.Response {
@@ -2635,6 +2669,9 @@ func applyMailDomain(resp agentproto.Response, dryRun bool, logger *slog.Logger,
 		_ = exec.Command("systemctl", "reload-or-restart", "postfix").Run()
 	}
 
+	if add {
+		ensureRoundcubeInstalled(logger)
+	}
 	if ensureDBAdminToolsNginx() {
 		_ = exec.Command("systemctl", "reload", "nginx").Run()
 	}
