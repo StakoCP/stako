@@ -259,6 +259,12 @@
           roles: ['admin'],
         },
         {
+          path: '/docs',
+          label: () => i18n.t.nav.docs,
+          activeNames: ['docs'],
+          roles: ['admin'],
+        },
+        {
           path: '/terminal',
           label: () => i18n.t.nav.terminal,
           activeNames: ['terminal'],

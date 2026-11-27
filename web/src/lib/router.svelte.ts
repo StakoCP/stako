@@ -31,6 +31,7 @@ export type RouteName =
   | 'system-services'
   | 'plugins'
   | 'plugin-page'
+  | 'docs'
   | 'terminal'
   | 'jobs'
   | 'job-detail'
@@ -85,6 +86,7 @@ function parseHash(): RouteMatch {
     const slug = decodeURIComponent(path.slice('/plugins/'.length));
     if (slug) return { name: 'plugin-page', params: { slug }, path };
   }
+  if (path === '/docs') return { name: 'docs', params: {}, path };
   if (path === '/terminal') return { name: 'terminal', params: {}, path };
   if (path === '/jobs') return { name: 'jobs', params: {}, path };
   if (path.startsWith('/jobs/')) {

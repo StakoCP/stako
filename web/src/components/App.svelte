@@ -16,6 +16,7 @@
   import DatabasesView from '../views/DatabasesView.svelte';
   import DnsView from '../views/DnsView.svelte';
   import DockerView from '../views/DockerView.svelte';
+  import DocsView from '../views/DocsView.svelte';
   import DomainsView from '../views/DomainsView.svelte';
   import FilesView from '../views/FilesView.svelte';
   import FirewallView from '../views/FirewallView.svelte';
@@ -133,6 +134,8 @@
       <PluginsView />
     {:else if router.current.name === 'plugin-page'}
       <PluginPageView slug={router.current.params.slug} />
+    {:else if router.current.name === 'docs' && auth.user.role === 'admin'}
+      <DocsView />
     {:else if router.current.name === 'terminal' && auth.user.role !== 'readonly'}
       <TerminalView />
     {:else if router.current.name === 'jobs'}
