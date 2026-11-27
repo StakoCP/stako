@@ -9,6 +9,7 @@
   import { toast } from '../lib/toast.svelte';
   import type {
     Domain,
+    DomainCacheConfig,
     DomainSSLMode,
     DomainStack,
     DomainTemplate,
@@ -432,6 +433,127 @@
       deleting = false;
     }
   }
+
+  // Cache & CDN modal
+  let cacheModalDomain = $state<Domain | null>(null);
+  let cacheConfig = $state<DomainCacheConfig | null>(null);
+  let cacheLoading = $state(false);
+  let cacheError = $state('');
+  let mcEnabled = $state(false);
+  let mcTtl = $state(10);
+  let mcSaving = $state(false);
+  let redisToggling = $state(false);
+  let cfZoneId = $state('');
+  let cfApiToken = $state('');
+  let cfUnderAttack = $state(false);
+  let cfDevMode = $state(false);
+  let cfSaving = $state(false);
+  let cfPurging = $state(false);
+
+  function syncCacheForm(cfg: DomainCacheConfig) {
+    cacheConfig = cfg;
+    mcEnabled = cfg.microcache_enabled;
+    mcTtl = cfg.microcache_ttl_sec > 0 ? cfg.microcache_ttl_sec : 10;
+    cfZoneId = cfg.cf_zone_id || '';
+    cfApiToken = '';
+    cfUnderAttack = cfg.cf_under_attack;
+    cfDevMode = cfg.cf_dev_mode;
+  }
+
+  async function openCacheModal(d: Domain) {
+    cacheModalDomain = d;
+    cacheConfig = null;
+    cacheError = '';
+    cacheLoading = true;
+    try {
+      const cfg = await api.get<DomainCacheConfig>(`/domains/${d.id}/cache`);
+      syncCacheForm(cfg);
+    } catch (err) {
+      cacheError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      cacheLoading = false;
+    }
+  }
+
+  async function saveMicrocache(e: SubmitEvent) {
+    e.preventDefault();
+    if (!cacheModalDomain) return;
+    cacheError = '';
+    mcSaving = true;
+    try {
+      const cfg = await api.put<DomainCacheConfig>(
+        `/domains/${cacheModalDomain.id}/cache/microcache`,
+        {
+          enabled: mcEnabled,
+          ttl_sec: Number(mcTtl) || 10,
+        }
+      );
+      syncCacheForm(cfg);
+      toast.success(i18n.t.domains.cache.microcacheSaved);
+    } catch (err) {
+      cacheError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      mcSaving = false;
+    }
+  }
+
+  async function toggleRedisObjectCache() {
+    if (!cacheModalDomain || !cacheConfig) return;
+    cacheError = '';
+    redisToggling = true;
+    try {
+      const cfg = await api.post<DomainCacheConfig>(
+        `/domains/${cacheModalDomain.id}/cache/redis-object`,
+        {
+          enabled: !cacheConfig.redis_object_cache,
+        }
+      );
+      syncCacheForm(cfg);
+      toast.success(i18n.t.domains.cache.redisSaved);
+    } catch (err) {
+      cacheError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      redisToggling = false;
+    }
+  }
+
+  async function saveCloudflare(e: SubmitEvent) {
+    e.preventDefault();
+    if (!cacheModalDomain) return;
+    cacheError = '';
+    cfSaving = true;
+    try {
+      const cfg = await api.put<DomainCacheConfig>(
+        `/domains/${cacheModalDomain.id}/cloudflare`,
+        {
+          cf_zone_id: cfZoneId.trim(),
+          cf_api_token: cfApiToken.trim(),
+          cf_under_attack: cfUnderAttack,
+          cf_dev_mode: cfDevMode,
+        }
+      );
+      syncCacheForm(cfg);
+      toast.success(i18n.t.domains.cache.cfSaved);
+    } catch (err) {
+      cacheError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      cfSaving = false;
+    }
+  }
+
+  async function purgeCloudflareCache() {
+    if (!cacheModalDomain) return;
+    cacheError = '';
+    cfPurging = true;
+    try {
+      await api.post(`/domains/${cacheModalDomain.id}/cloudflare/purge`, {});
+      toast.success(i18n.t.domains.cache.purgedSuccess);
+    } catch (err) {
+      cacheError = err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric;
+    } finally {
+      cfPurging = false;
+    }
+  }
 </script>
 
 <div class="page-header">
@@ -571,6 +693,15 @@
                     onclick={() => openCustomNginx(d)}
                   >
                     <ActionIcon name="config" />
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.domains.cacheCdn}
+                    aria-label={i18n.t.domains.cacheCdn}
+                    onclick={() => openCacheModal(d)}
+                  >
+                    <ActionIcon name="shield" />
                   </button>
                 {/if}
                 {#if canWrite}
@@ -1036,6 +1167,144 @@
     </button>
     <button type="button" class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
       {deleting ? i18n.t.common.loading : i18n.t.common.delete}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={cacheModalDomain !== null}
+  title={cacheModalDomain ? fmt(i18n.t.domains.cache.modalTitle, { domain: cacheModalDomain.domain }) : ''}
+  size="lg"
+  onclose={() => (cacheModalDomain = null)}
+>
+  {#if cacheError}
+    <div class="alert alert-danger" role="alert">{cacheError}</div>
+  {/if}
+
+  {#if cacheLoading}
+    <p>{i18n.t.common.loading}</p>
+  {:else if cacheConfig}
+    <div class="card">
+      <div class="card-header-row">
+        <h3 class="card-title">{i18n.t.domains.cache.microcacheTitle}</h3>
+      </div>
+      <form onsubmit={saveMicrocache}>
+        <div class="form-group">
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={mcEnabled} />
+            <span>{i18n.t.domains.cache.microcacheEnabled}</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="mc-ttl">{i18n.t.domains.cache.microcacheTTL}</label>
+            <input
+              id="mc-ttl"
+              type="number"
+              class="form-control"
+              min="1"
+              max="3600"
+              bind:value={mcTtl}
+              required
+            />
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm" disabled={mcSaving}>
+          {mcSaving ? i18n.t.common.loading : i18n.t.domains.cache.saveMicrocache}
+        </button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-header-row">
+        <h3 class="card-title">{i18n.t.domains.cache.redisTitle}</h3>
+        <span
+          class="badge"
+          class:badge-success={cacheConfig.redis_object_cache}
+        >
+          {cacheConfig.redis_object_cache
+            ? `${i18n.t.domains.cache.redisActive}${cacheConfig.redis_port > 0 ? ` :${cacheConfig.redis_port}` : ''}`
+            : i18n.t.domains.cache.redisInactive}
+        </span>
+      </div>
+      <p class="form-hint">{i18n.t.domains.cache.redisDesc}</p>
+      {#if cacheConfig.redis_port > 0}
+        <p class="form-hint mono">{i18n.t.domains.cache.redisPortLabel}: {cacheConfig.redis_port}</p>
+      {/if}
+      <button
+        type="button"
+        class={cacheConfig.redis_object_cache ? 'btn btn-danger btn-sm' : 'btn btn-primary btn-sm'}
+        onclick={toggleRedisObjectCache}
+        disabled={redisToggling}
+      >
+        {redisToggling
+          ? i18n.t.common.loading
+          : cacheConfig.redis_object_cache
+            ? i18n.t.domains.cache.redisDisableBtn
+            : i18n.t.domains.cache.redisEnabledBtn}
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-header-row">
+        <h3 class="card-title">{i18n.t.domains.cache.cfTitle}</h3>
+      </div>
+      <form onsubmit={saveCloudflare}>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="cf-zone-id">{i18n.t.domains.cache.cfZoneId}</label>
+            <input
+              id="cf-zone-id"
+              type="text"
+              class="form-control mono"
+              bind:value={cfZoneId}
+              placeholder="023e105f4ecef8ad9ca31a8372d0c353"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cf-api-token">{i18n.t.domains.cache.cfApiToken}</label>
+            <input
+              id="cf-api-token"
+              type="password"
+              class="form-control"
+              bind:value={cfApiToken}
+              autocomplete="off"
+            />
+            {#if cacheConfig.has_cf_token}
+              <p class="form-hint">{i18n.t.domains.cache.cfTokenHint}</p>
+            {/if}
+          </div>
+        </div>
+        <div class="checkbox-group">
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={cfUnderAttack} />
+            <span>{i18n.t.domains.cache.cfUnderAttack}</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={cfDevMode} />
+            <span>{i18n.t.domains.cache.cfDevMode}</span>
+          </label>
+        </div>
+        <div class="toolbar">
+          <button type="submit" class="btn btn-primary btn-sm" disabled={cfSaving}>
+            {cfSaving ? i18n.t.common.loading : i18n.t.domains.cache.saveCf}
+          </button>
+          <button
+            type="button"
+            class="btn btn-danger btn-sm"
+            onclick={purgeCloudflareCache}
+            disabled={cfPurging || !cacheConfig.cf_zone_id || !cacheConfig.has_cf_token}
+          >
+            {cfPurging ? i18n.t.common.loading : i18n.t.domains.cache.purgeAllBtn}
+          </button>
+        </div>
+      </form>
+    </div>
+  {/if}
+
+  {#snippet footer()}
+    <button type="button" class="btn" onclick={() => (cacheModalDomain = null)}>
+      {i18n.t.common.close}
     </button>
   {/snippet}
 </Modal>

@@ -96,6 +96,8 @@ const (
 	CmdPGReplicationApply   = "pg.replication_apply"
 	CmdPGReplicationStatus  = "pg.replication_status"
 	CmdPGPITRApply          = "pg.pitr_apply"
+	CmdNginxMicrocacheApply = "cache.nginx_microcache"
+	CmdRedisObjectCacheApply = "cache.redis_object"
 )
 
 type Request struct {

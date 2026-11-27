@@ -801,3 +801,18 @@ export interface WPSite {
   last_scanned_at: string;
   created_at: string;
 }
+
+export interface DomainCacheConfig {
+  domain_id: string;
+  user_id: string;
+  microcache_enabled: boolean;
+  microcache_ttl_sec: number;
+  redis_object_cache: boolean;
+  redis_instance_id: string;
+  redis_port: number;
+  cf_zone_id: string;
+  has_cf_token: boolean;
+  cf_under_attack: boolean;
+  cf_dev_mode: boolean;
+  updated_at: string;
+}

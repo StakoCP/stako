@@ -1327,3 +1327,78 @@ func TestPostgreSQLAdvancedPgBouncerReplicationPITR(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestDomainCacheRedisAndCloudflare(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Create domain
+	rec = doReq(t, h, "POST", "/api/v1/domains", map[string]any{
+		"domain": "cachedsite.example.com", "stack": "nginx_apache", "template": "wordpress",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create domain = %d: %s", rec.Code, rec.Body.String())
+	}
+	var domResp struct {
+		Domain struct {
+			ID string `json:"id"`
+		} `json:"domain"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &domResp)
+	domID := domResp.Domain.ID
+
+	// Get initial cache config
+	if rec := doReq(t, h, "GET", "/api/v1/domains/"+domID+"/cache", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("get cache = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Enable Nginx Microcache
+	rec = doReq(t, h, "PUT", "/api/v1/domains/"+domID+"/cache/microcache", map[string]any{
+		"enabled": true, "ttl_sec": 30,
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"microcache_enabled":true`)) {
+		t.Fatalf("set microcache = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// One-click Redis Object Cache
+	rec = doReq(t, h, "POST", "/api/v1/domains/"+domID+"/cache/redis-object", map[string]any{
+		"enabled": true,
+	}, cookies, csrf)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"redis_object_cache":true`)) {
+		t.Fatalf("redis object cache = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Cloudflare CDN settings & purge (token must not leak)
+	rec = doReq(t, h, "PUT", "/api/v1/domains/"+domID+"/cloudflare", map[string]any{
+		"cf_zone_id":      "zone123456",
+		"cf_api_token":    "test-cf-secret-token",
+		"cf_under_attack": true,
+		"cf_dev_mode":     false,
+	}, cookies, csrf)
+	if rec.Code != 200 || bytes.Contains(rec.Body.Bytes(), []byte("test-cf-secret-token")) {
+		t.Fatalf("set cloudflare = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"has_cf_token":true`)) {
+		t.Fatalf("expected has_cf_token:true, got %s", rec.Body.String())
+	}
+
+	if rec := doReq(t, h, "POST", "/api/v1/domains/"+domID+"/cloudflare/purge", nil, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("purge cloudflare = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

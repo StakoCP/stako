@@ -1617,6 +1617,12 @@ logfile /var/log/redis/redis-server-%s.log
 	case agentproto.CmdPGPITRApply:
 		return applyPGPITR(resp, dryRun, logger, req.Args)
 
+	case agentproto.CmdNginxMicrocacheApply:
+		return applyNginxMicrocache(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdRedisObjectCacheApply:
+		return applyRedisObjectCache(resp, dryRun, logger, req.Args)
+
 	case agentproto.CmdPanelImport:
 		return runPanelImport(resp, dryRun, logger, req.Args)
 
@@ -3752,4 +3758,131 @@ func applyPGPITR(resp agentproto.Response, dryRun bool, logger *slog.Logger, arg
 		logger.Info("applied postgresql PITR config", "enabled", enabled, "archive_dir", archiveDir)
 		return runExec(resp, false, logger, "systemctl", "reload-or-restart", "postgresql")
 	}
+}
+
+func applyNginxMicrocache(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	username, _ := args["username"].(string)
+	domain, _ := args["domain"].(string)
+	enabled, _ := args["enabled"].(bool)
+	ttl := 10
+	if tf, ok := args["ttl_sec"].(float64); ok && tf > 0 && tf <= 3600 {
+		ttl = int(tf)
+	}
+	if err := agentproto.ValidateLinuxUsername(username); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if err := agentproto.ValidateDomain(domain); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] nginx microcache domain=%s enabled=%v ttl=%ds", domain, enabled, ttl)
+		return resp
+	}
+
+	const globalCacheConf = "/etc/nginx/conf.d/stako-microcache.conf"
+	_ = os.MkdirAll("/var/cache/nginx/stako", 0o750)
+	_ = os.MkdirAll("/var/cache/nginx/stako_proxy", 0o750)
+	globalCfg := `# Managed by Stako Panel
+fastcgi_cache_path /var/cache/nginx/stako levels=1:2 keys_zone=STAKO_MICRO:32m inactive=10m max_size=512m;
+proxy_cache_path /var/cache/nginx/stako_proxy levels=1:2 keys_zone=STAKO_PROXY:32m inactive=10m max_size=512m;
+`
+	_ = os.WriteFile(globalCacheConf, []byte(globalCfg), 0o644)
+
+	confDir := fmt.Sprintf("/home/%s/web/%s/conf/nginx", username, domain)
+	_ = os.MkdirAll(confDir, 0o750)
+	domConf := filepath.Join(confDir, "stako-microcache.conf")
+	if !enabled {
+		_ = os.Remove(domConf)
+	} else {
+		snippet := fmt.Sprintf(`# Managed by Stako Microcache
+set $skip_cache 0;
+if ($request_method = POST) { set $skip_cache 1; }
+if ($query_string != "") { set $skip_cache 1; }
+if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_logged_in") { set $skip_cache 1; }
+fastcgi_cache STAKO_MICRO;
+fastcgi_cache_valid 200 %ds;
+fastcgi_cache_bypass $skip_cache;
+fastcgi_no_cache $skip_cache;
+add_header X-Stako-Cache $upstream_cache_status;
+`, ttl)
+		if err := os.WriteFile(domConf, []byte(snippet), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+	}
+	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+		_ = os.Remove(domConf)
+		resp.Error = fmt.Sprintf("nginx -t: %v: %s", err, strings.TrimSpace(string(out)))
+		return resp
+	}
+	logger.Info("applied nginx microcache", "domain", domain, "enabled", enabled, "ttl", ttl)
+	return runExec(resp, false, logger, "systemctl", "reload", "nginx")
+}
+
+func applyRedisObjectCache(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	username, _ := args["username"].(string)
+	domain, _ := args["domain"].(string)
+	docroot, _ := args["docroot"].(string)
+	enabled, _ := args["enabled"].(bool)
+	port := 6379
+	if pf, ok := args["redis_port"].(float64); ok && pf > 0 {
+		port = int(pf)
+	}
+	if err := agentproto.ValidateLinuxUsername(username); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if err := agentproto.ValidateDomain(domain); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] redis object cache domain=%s enabled=%v port=%d", domain, enabled, port)
+		return resp
+	}
+
+	envPath := fmt.Sprintf("/home/%s/web/%s/conf/redis-cache.env", username, domain)
+	if !enabled {
+		_ = os.Remove(envPath)
+		if _, err := exec.LookPath("wp"); err == nil && docroot != "" {
+			if _, err := os.Stat(filepath.Join(docroot, "wp-config.php")); err == nil {
+				_ = exec.Command("sudo", "-u", username, "wp", "redis", "disable", "--path="+docroot).Run()
+			}
+		}
+		resp.OK = true
+		resp.Output = "Redis object cache disabled for " + domain
+		return resp
+	}
+
+	_ = os.MkdirAll(filepath.Dir(envPath), 0o750)
+	_ = os.WriteFile(envPath, []byte(fmt.Sprintf("REDIS_HOST=127.0.0.1\nREDIS_PORT=%d\n", port)), 0o600)
+
+	if docroot != "" {
+		wpCfg := filepath.Join(docroot, "wp-config.php")
+		if b, err := os.ReadFile(wpCfg); err == nil {
+			content := string(b)
+			if !strings.Contains(content, "WP_REDIS_PORT") {
+				add := fmt.Sprintf("define('WP_REDIS_HOST', '127.0.0.1');\ndefine('WP_REDIS_PORT', %d);\n", port)
+				needle := "/* That's all, stop editing!"
+				if strings.Contains(content, needle) {
+					content = strings.Replace(content, needle, add+needle, 1)
+				} else {
+					content += "\n" + add
+				}
+				_ = os.WriteFile(wpCfg, []byte(content), 0o600)
+			}
+			if _, err := exec.LookPath("wp"); err == nil {
+				_ = exec.Command("sudo", "-u", username, "wp", "plugin", "install", "redis-cache", "--activate", "--path="+docroot).Run()
+				_ = exec.Command("sudo", "-u", username, "wp", "redis", "enable", "--path="+docroot).Run()
+			}
+		}
+	}
+	logger.Info("applied redis object cache", "domain", domain, "port", port)
+	resp.OK = true
+	resp.Output = fmt.Sprintf("Redis object cache enabled on 127.0.0.1:%d", port)
+	return resp
 }
