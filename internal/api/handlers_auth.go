@@ -151,6 +151,61 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleUpdateOwnProfile(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	if ac.User.Role == "readonly" {
+		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteProblem(w, http.StatusBadRequest, "validation", "Invalid request", err.Error())
+		return
+	}
+	email := strings.TrimSpace(req.Email)
+	if email == "" || !strings.Contains(email, "@") {
+		WriteProblem(w, http.StatusUnprocessableEntity, "validation", "Valid email is required", "")
+		return
+	}
+	u := *ac.User
+	u.Email = email
+	if err := s.store.UpdateUser(r.Context(), &u); err != nil {
+		handleStoreErr(w, err)
+		return
+	}
+	s.audit(r, ac.User, "auth.profile_update", "user", u.ID, "success", map[string]any{"email": email})
+	WriteJSON(w, http.StatusOK, map[string]any{"user": &u})
+}
+
+func (s *Server) handleMyUsage(w http.ResponseWriter, r *http.Request) {
+	ac := GetAuth(r)
+	uid := ac.User.ID
+	_, domTotal, _ := s.store.ListDomains(r.Context(), &uid, nil, "", 1, 0)
+	_, dbTotal, _ := s.store.ListDatabases(r.Context(), &uid, nil, 1, 0)
+	mailDoms, _ := s.store.ListMailDomains(r.Context(), &uid, nil)
+	_, ctTotal, _ := s.store.ListContainers(r.Context(), &uid, nil, 1, 0)
+
+	var diskUsedMB, diskLimitMB, inodeUsed, inodeLimit int
+	if q, err := s.store.GetUserDiskQuota(r.Context(), uid); err == nil {
+		diskUsedMB = q.DiskUsedMB
+		diskLimitMB = q.DiskLimitMB
+		inodeUsed = q.InodeUsed
+		inodeLimit = q.InodeLimit
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"domains":       domTotal,
+		"databases":     dbTotal,
+		"mail_domains":  len(mailDoms),
+		"containers":    ctTotal,
+		"disk_used_mb":  diskUsedMB,
+		"disk_limit_mb": diskLimitMB,
+		"inode_used":    inodeUsed,
+		"inode_limit":   inodeLimit,
+	})
+}
+
 func (s *Server) handleReauth(w http.ResponseWriter, r *http.Request) {
 	ac := GetAuth(r)
 	if ac.Session == nil {

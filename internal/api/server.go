@@ -74,6 +74,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(s.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
+	mux.HandleFunc("PATCH /api/v1/auth/profile", s.requireAuth(s.handleUpdateOwnProfile))
+	mux.HandleFunc("GET /api/v1/auth/me/usage", s.requireAuth(s.handleMyUsage))
 	mux.HandleFunc("POST /api/v1/auth/reauth", s.requireAuth(s.handleReauth))
 	mux.HandleFunc("POST /api/v1/auth/password", s.requireAuth(s.handleChangePassword))
 	mux.HandleFunc("POST /api/v1/auth/2fa/setup", s.requireAuth(s.handle2FASetup))
