@@ -252,6 +252,45 @@ export interface Database {
   created_at: string;
 }
 
+export interface PgBouncerConfig {
+  enabled: boolean;
+  listen_port: number;
+  pool_mode: 'transaction' | 'session' | 'statement';
+  max_client_conn: number;
+  default_pool_size: number;
+  reserve_pool_size: number;
+}
+
+export interface PGReplicationConfig {
+  role: 'disabled' | 'primary' | 'standby';
+  wal_level: 'replica' | 'logical';
+  max_wal_senders: number;
+  wal_keep_size_mb: number;
+  replication_user: string;
+  replication_pass?: string;
+  has_replication_password?: boolean;
+  standby_hosts: string[];
+  primary_host: string;
+  primary_port: number;
+}
+
+export interface PGPITRConfig {
+  enabled: boolean;
+  archive_dir: string;
+  retention_days: number;
+}
+
+export interface PGAdvancedResponse {
+  pgbouncer: PgBouncerConfig;
+  replication: PGReplicationConfig;
+  pitr: PGPITRConfig;
+  status: {
+    pgbouncer_active: boolean;
+    in_recovery: boolean;
+    replication_peers: string[];
+  };
+}
+
 export type FtpProtocol = 'ftps' | 'sftp';
 
 export interface FtpAccount {

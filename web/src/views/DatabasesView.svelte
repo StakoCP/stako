@@ -8,7 +8,16 @@
   import { formatDateTime } from '../lib/format';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
-  import type { Database, DatabaseEngine, PaginatedResponse, User } from '../lib/types';
+  import type {
+    Database,
+    DatabaseEngine,
+    PGAdvancedResponse,
+    PGPITRConfig,
+    PGReplicationConfig,
+    PgBouncerConfig,
+    PaginatedResponse,
+    User,
+  } from '../lib/types';
 
   let databases = $state<Database[]>([]);
   let users = $state<User[]>([]);
@@ -18,6 +27,7 @@
   let loading = $state(true);
 
   let canWrite = $derived(auth.user?.role !== 'readonly');
+  let isAdmin = $derived(auth.user?.role === 'admin');
   let canSelectOwner = $derived(auth.user?.role === 'admin' || auth.user?.role === 'reseller');
   let selectedUsername = $derived(
     users.find((u) => u.id === fUserId)?.username ?? auth.user?.username ?? 'user'
@@ -39,6 +49,43 @@
   // Delete modal
   let deleteTarget = $state<Database | null>(null);
   let deleting = $state(false);
+
+  // Advanced PostgreSQL (admin only)
+  let pgAdvTab = $state<'pgbouncer' | 'replication' | 'pitr'>('pgbouncer');
+  let pgAdvLoading = $state(false);
+  let pgSaving = $state(false);
+  let pgBouncer = $state<PgBouncerConfig>({
+    enabled: false,
+    listen_port: 6432,
+    pool_mode: 'transaction',
+    max_client_conn: 100,
+    default_pool_size: 20,
+    reserve_pool_size: 5,
+  });
+  let pgReplication = $state<PGReplicationConfig>({
+    role: 'disabled',
+    wal_level: 'replica',
+    max_wal_senders: 5,
+    wal_keep_size_mb: 256,
+    replication_user: 'replicator',
+    standby_hosts: [],
+    primary_host: '',
+    primary_port: 5432,
+  });
+  let pgRepPass = $state('');
+  let standbyHostsInput = $state('');
+  let pgPitr = $state<PGPITRConfig>({
+    enabled: false,
+    archive_dir: '/var/lib/postgresql/wal_archive',
+    retention_days: 7,
+  });
+  let pgStatus = $state<PGAdvancedResponse['status']>({
+    pgbouncer_active: false,
+    in_recovery: false,
+    replication_peers: [],
+  });
+  let pitrTargetTime = $state('');
+  let pitrBusy = $state(false);
 
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
@@ -78,10 +125,111 @@
     }
   }
 
+  async function loadPgAdvanced() {
+    if (auth.user?.role !== 'admin') return;
+    pgAdvLoading = true;
+    try {
+      const res = await api.get<PGAdvancedResponse>('/databases/postgres/advanced');
+      pgBouncer = res.pgbouncer;
+      pgReplication = res.replication;
+      standbyHostsInput = (res.replication.standby_hosts ?? []).join(', ');
+      pgRepPass = '';
+      pgPitr = res.pitr;
+      pgStatus = res.status;
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      pgAdvLoading = false;
+    }
+  }
+
   onMount(() => {
     loadDatabases();
     loadUsers();
+    loadPgAdvanced();
   });
+
+  async function savePgBouncer(e: SubmitEvent) {
+    e.preventDefault();
+    pgSaving = true;
+    try {
+      const res = await api.put<{ job_id?: string }>('/databases/postgres/pgbouncer', pgBouncer);
+      notifyJob(i18n.t.databases.pgAdvanced.pgBouncerSaved, res?.job_id);
+      await loadPgAdvanced();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      pgSaving = false;
+    }
+  }
+
+  async function saveReplication(e: SubmitEvent) {
+    e.preventDefault();
+    pgSaving = true;
+    try {
+      const standby_hosts = standbyHostsInput
+        .split(',')
+        .map((h) => h.trim())
+        .filter((h) => h.length > 0);
+      const payload: PGReplicationConfig = {
+        ...pgReplication,
+        standby_hosts,
+      };
+      if (pgRepPass) {
+        payload.replication_pass = pgRepPass;
+      }
+      const res = await api.put<{ job_id?: string }>('/databases/postgres/replication', payload);
+      notifyJob(i18n.t.databases.pgAdvanced.replicationSaved, res?.job_id);
+      pgRepPass = '';
+      await loadPgAdvanced();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      pgSaving = false;
+    }
+  }
+
+  async function savePitr(e: SubmitEvent) {
+    e.preventDefault();
+    pgSaving = true;
+    try {
+      const res = await api.put<{ job_id?: string }>('/databases/postgres/pitr', pgPitr);
+      notifyJob(i18n.t.databases.pgAdvanced.pitrSaved, res?.job_id);
+      await loadPgAdvanced();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      pgSaving = false;
+    }
+  }
+
+  async function takeBaseBackup() {
+    pitrBusy = true;
+    try {
+      const res = await api.post<{ job_id?: string }>('/databases/postgres/pitr/basebackup');
+      notifyJob(i18n.t.databases.pgAdvanced.baseBackupStarted, res?.job_id);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      pitrBusy = false;
+    }
+  }
+
+  async function triggerPitrRestore(e: SubmitEvent) {
+    e.preventDefault();
+    if (!pitrTargetTime.trim()) return;
+    pitrBusy = true;
+    try {
+      const res = await api.post<{ job_id?: string }>('/databases/postgres/pitr/restore', {
+        target_time: pitrTargetTime.trim(),
+      });
+      notifyJob(i18n.t.databases.pgAdvanced.restoreStarted, res?.job_id);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      pitrBusy = false;
+    }
+  }
 
   function openCreate() {
     fName = '';
@@ -277,6 +425,327 @@
     loadDatabases();
   }}
 />
+
+{#if isAdmin}
+  <hr class="section-divider" />
+  <div class="card">
+    <div class="card-header-row">
+      <div>
+        <h2 class="card-title">{i18n.t.databases.pgAdvanced.title}</h2>
+        <p class="form-hint">{i18n.t.databases.pgAdvanced.subtitle}</p>
+      </div>
+      <div class="table-actions">
+        <span class="badge {pgStatus.pgbouncer_active ? 'badge-success' : 'badge-warning'}">
+          {pgStatus.pgbouncer_active
+            ? i18n.t.databases.pgAdvanced.activeBadge
+            : i18n.t.databases.pgAdvanced.inactiveBadge}
+        </span>
+        {#if pgStatus.in_recovery}
+          <span class="badge badge-info">{i18n.t.databases.pgAdvanced.inRecoveryBadge}</span>
+        {/if}
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label={i18n.t.databases.pgAdvanced.title}>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={pgAdvTab === 'pgbouncer'}
+        class="tab-btn"
+        class:active={pgAdvTab === 'pgbouncer'}
+        onclick={() => (pgAdvTab = 'pgbouncer')}
+      >
+        {i18n.t.databases.pgAdvanced.tabs.pgbouncer}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={pgAdvTab === 'replication'}
+        class="tab-btn"
+        class:active={pgAdvTab === 'replication'}
+        onclick={() => (pgAdvTab = 'replication')}
+      >
+        {i18n.t.databases.pgAdvanced.tabs.replication}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={pgAdvTab === 'pitr'}
+        class="tab-btn"
+        class:active={pgAdvTab === 'pitr'}
+        onclick={() => (pgAdvTab = 'pitr')}
+      >
+        {i18n.t.databases.pgAdvanced.tabs.pitr}
+      </button>
+    </div>
+
+    {#if pgAdvLoading}
+      <p class="empty-state">{i18n.t.common.loading}</p>
+    {:else if pgAdvTab === 'pgbouncer'}
+      <form onsubmit={savePgBouncer}>
+        <div class="form-group">
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={pgBouncer.enabled} />
+            <span>{i18n.t.databases.pgAdvanced.enabled}</span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="pgb-port">{i18n.t.databases.pgAdvanced.listenPort}</label>
+            <input
+              id="pgb-port"
+              type="number"
+              class="form-control"
+              bind:value={pgBouncer.listen_port}
+              min="1"
+              max="65535"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pgb-mode">{i18n.t.databases.pgAdvanced.poolMode}</label>
+            <select id="pgb-mode" class="form-control" bind:value={pgBouncer.pool_mode}>
+              <option value="transaction">transaction</option>
+              <option value="session">session</option>
+              <option value="statement">statement</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pgb-max-conn">
+              {i18n.t.databases.pgAdvanced.maxClientConn}
+            </label>
+            <input
+              id="pgb-max-conn"
+              type="number"
+              class="form-control"
+              bind:value={pgBouncer.max_client_conn}
+              min="1"
+              required
+            />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="pgb-default-pool">
+              {i18n.t.databases.pgAdvanced.defaultPoolSize}
+            </label>
+            <input
+              id="pgb-default-pool"
+              type="number"
+              class="form-control"
+              bind:value={pgBouncer.default_pool_size}
+              min="1"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pgb-reserve-pool">
+              {i18n.t.databases.pgAdvanced.reservePoolSize}
+            </label>
+            <input
+              id="pgb-reserve-pool"
+              type="number"
+              class="form-control"
+              bind:value={pgBouncer.reserve_pool_size}
+              min="0"
+              required
+            />
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" disabled={pgSaving}>
+          {pgSaving ? i18n.t.common.loading : i18n.t.databases.pgAdvanced.savePgBouncer}
+        </button>
+      </form>
+    {:else if pgAdvTab === 'replication'}
+      <form onsubmit={saveReplication}>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-role">{i18n.t.databases.pgAdvanced.role}</label>
+            <select id="pg-rep-role" class="form-control" bind:value={pgReplication.role}>
+              <option value="disabled">{i18n.t.databases.pgAdvanced.roleDisabled}</option>
+              <option value="primary">{i18n.t.databases.pgAdvanced.rolePrimary}</option>
+              <option value="standby">{i18n.t.databases.pgAdvanced.roleStandby}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-wal">{i18n.t.databases.pgAdvanced.walLevel}</label>
+            <select id="pg-rep-wal" class="form-control" bind:value={pgReplication.wal_level}>
+              <option value="replica">replica</option>
+              <option value="logical">logical</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-senders">
+              {i18n.t.databases.pgAdvanced.maxWalSenders}
+            </label>
+            <input
+              id="pg-rep-senders"
+              type="number"
+              class="form-control"
+              bind:value={pgReplication.max_wal_senders}
+              min="0"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-keep">
+              {i18n.t.databases.pgAdvanced.walKeepSize}
+            </label>
+            <input
+              id="pg-rep-keep"
+              type="number"
+              class="form-control"
+              bind:value={pgReplication.wal_keep_size_mb}
+              min="0"
+            />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-user">{i18n.t.databases.pgAdvanced.repUser}</label>
+            <input
+              id="pg-rep-user"
+              type="text"
+              class="form-control"
+              bind:value={pgReplication.replication_user}
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-pass">{i18n.t.databases.pgAdvanced.repPass}</label>
+            <input
+              id="pg-rep-pass"
+              type="password"
+              class="form-control"
+              bind:value={pgRepPass}
+              autocomplete="new-password"
+              placeholder={pgReplication.has_replication_password
+                ? i18n.t.databases.pgAdvanced.repPassHint
+                : ''}
+            />
+            {#if pgReplication.has_replication_password}
+              <p class="form-hint">{i18n.t.databases.pgAdvanced.repPassHint}</p>
+            {/if}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="pg-rep-standbys">
+            {i18n.t.databases.pgAdvanced.standbyHosts}
+          </label>
+          <input
+            id="pg-rep-standbys"
+            type="text"
+            class="form-control"
+            bind:value={standbyHostsInput}
+            placeholder="10.0.0.11, 10.0.0.12"
+          />
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-primary-host">
+              {i18n.t.databases.pgAdvanced.primaryHost}
+            </label>
+            <input
+              id="pg-rep-primary-host"
+              type="text"
+              class="form-control"
+              bind:value={pgReplication.primary_host}
+              placeholder="10.0.0.10"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pg-rep-primary-port">
+              {i18n.t.databases.pgAdvanced.primaryPort}
+            </label>
+            <input
+              id="pg-rep-primary-port"
+              type="number"
+              class="form-control"
+              bind:value={pgReplication.primary_port}
+              min="1"
+              max="65535"
+            />
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" disabled={pgSaving}>
+          {pgSaving ? i18n.t.common.loading : i18n.t.databases.pgAdvanced.saveReplication}
+        </button>
+      </form>
+    {:else if pgAdvTab === 'pitr'}
+      <form onsubmit={savePitr}>
+        <div class="form-group">
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={pgPitr.enabled} />
+            <span>{i18n.t.databases.pgAdvanced.walArchivingEnabled}</span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="pg-pitr-dir">{i18n.t.databases.pgAdvanced.archiveDir}</label>
+            <input
+              id="pg-pitr-dir"
+              type="text"
+              class="form-control"
+              bind:value={pgPitr.archive_dir}
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pg-pitr-retention">
+              {i18n.t.databases.pgAdvanced.retentionDays}
+            </label>
+            <input
+              id="pg-pitr-retention"
+              type="number"
+              class="form-control"
+              bind:value={pgPitr.retention_days}
+              min="1"
+              required
+            />
+          </div>
+        </div>
+
+        <div class="quick-actions">
+          <button type="submit" class="btn btn-primary" disabled={pgSaving}>
+            {pgSaving ? i18n.t.common.loading : i18n.t.databases.pgAdvanced.savePitr}
+          </button>
+          <button type="button" class="btn" onclick={takeBaseBackup} disabled={pitrBusy}>
+            {pitrBusy ? i18n.t.common.loading : i18n.t.databases.pgAdvanced.takeBaseBackup}
+          </button>
+        </div>
+      </form>
+
+      <hr class="section-divider" />
+
+      <form onsubmit={triggerPitrRestore}>
+        <div class="form-group">
+          <label class="form-label" for="pg-pitr-target">
+            {i18n.t.databases.pgAdvanced.restoreTargetTime}
+          </label>
+          <div class="input-group">
+            <input
+              id="pg-pitr-target"
+              type="text"
+              class="form-control mono"
+              bind:value={pitrTargetTime}
+              placeholder="2026-11-27T01:00:00Z"
+              required
+            />
+            <button type="submit" class="btn btn-danger" disabled={pitrBusy}>
+              {pitrBusy ? i18n.t.common.loading : i18n.t.databases.pgAdvanced.restoreBtn}
+            </button>
+          </div>
+        </div>
+      </form>
+    {/if}
+  </div>
+{/if}
 
 <Modal open={formOpen} title={i18n.t.databases.createDb} onclose={() => (formOpen = false)}>
   <form id="db-form" onsubmit={submitForm}>

@@ -1605,6 +1605,18 @@ logfile /var/log/redis/redis-server-%s.log
 	case agentproto.CmdWPAutoLogin:
 		return wpAutoLogin(resp, dryRun, logger, req.Args)
 
+	case agentproto.CmdPGPoolApply:
+		return applyPgBouncer(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdPGReplicationApply:
+		return applyPGReplication(resp, dryRun, logger, req.Args)
+
+	case agentproto.CmdPGReplicationStatus:
+		return getPGReplicationStatus(resp, dryRun)
+
+	case agentproto.CmdPGPITRApply:
+		return applyPGPITR(resp, dryRun, logger, req.Args)
+
 	case agentproto.CmdPanelImport:
 		return runPanelImport(resp, dryRun, logger, req.Args)
 
@@ -3485,4 +3497,259 @@ exit;
 	resp.OK = true
 	resp.Data = map[string]any{"login_url": loginURL, "expires_in": 60}
 	return resp
+}
+
+func pgConfDirs() []string {
+	matches, _ := filepath.Glob("/etc/postgresql/*/main/conf.d")
+	return matches
+}
+
+func pgMainDirs() []string {
+	matches, _ := filepath.Glob("/etc/postgresql/*/main")
+	return matches
+}
+
+func applyPgBouncer(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	enabled, _ := args["enabled"].(bool)
+	listenPort := 6432
+	if p, ok := args["listen_port"].(float64); ok && p > 0 && p <= 65535 {
+		listenPort = int(p)
+	}
+	poolMode, _ := args["pool_mode"].(string)
+	if poolMode != "transaction" && poolMode != "session" && poolMode != "statement" {
+		poolMode = "transaction"
+	}
+	maxClient := 200
+	if m, ok := args["max_client_conn"].(float64); ok && m > 0 {
+		maxClient = int(m)
+	}
+	defaultPool := 20
+	if d, ok := args["default_pool_size"].(float64); ok && d > 0 {
+		defaultPool = int(d)
+	}
+	reservePool := 5
+	if r, ok := args["reserve_pool_size"].(float64); ok && r >= 0 {
+		reservePool = int(r)
+	}
+
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] pgbouncer enabled=%v port=%d mode=%s max_client=%d pool=%d", enabled, listenPort, poolMode, maxClient, defaultPool)
+		return resp
+	}
+
+	if !enabled {
+		_ = exec.Command("systemctl", "disable", "--now", "pgbouncer").Run()
+		resp.OK = true
+		resp.Output = "PgBouncer disabled"
+		return resp
+	}
+
+	_ = os.MkdirAll("/etc/pgbouncer", 0o750)
+	ini := fmt.Sprintf(`; Managed by Stako Panel
+[databases]
+* = host=127.0.0.1 port=5432
+
+[pgbouncer]
+listen_addr = 127.0.0.1
+listen_port = %d
+auth_type = scram-sha-256
+auth_file = /etc/pgbouncer/userlist.txt
+pool_mode = %s
+max_client_conn = %d
+default_pool_size = %d
+reserve_pool_size = %d
+admin_users = postgres
+stats_users = postgres
+ignore_startup_parameters = extra_float_digits
+`, listenPort, poolMode, maxClient, defaultPool, reservePool)
+	if err := os.WriteFile("/etc/pgbouncer/pgbouncer.ini", []byte(ini), 0o640); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if _, err := os.Stat("/etc/pgbouncer/userlist.txt"); os.IsNotExist(err) {
+		_ = os.WriteFile("/etc/pgbouncer/userlist.txt", []byte(""), 0o640)
+	}
+	logger.Info("applied pgbouncer config", "port", listenPort, "mode", poolMode)
+	return runExec(resp, false, logger, "systemctl", "enable", "--now", "pgbouncer")
+}
+
+func applyPGReplication(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	role, _ := args["role"].(string) // "disabled", "primary", "standby"
+	walLevel, _ := args["wal_level"].(string)
+	if walLevel != "replica" && walLevel != "logical" {
+		walLevel = "replica"
+	}
+	maxSenders := 10
+	if ms, ok := args["max_wal_senders"].(float64); ok && ms > 0 {
+		maxSenders = int(ms)
+	}
+	walKeepMB := 512
+	if wk, ok := args["wal_keep_size_mb"].(float64); ok && wk >= 0 {
+		walKeepMB = int(wk)
+	}
+	repUser, _ := args["replication_user"].(string)
+	if repUser == "" {
+		repUser = "replicator"
+	}
+	repPass, _ := args["replication_pass"].(string)
+	primaryHost, _ := args["primary_host"].(string)
+	primaryPort := 5432
+	if pp, ok := args["primary_port"].(float64); ok && pp > 0 && pp <= 65535 {
+		primaryPort = int(pp)
+	}
+
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] postgresql replication role=%s wal_level=%s max_wal_senders=%d", role, walLevel, maxSenders)
+		return resp
+	}
+
+	confDirs := pgConfDirs()
+	for _, d := range confDirs {
+		confFile := filepath.Join(d, "90-stako-replication.conf")
+		if role == "disabled" || role == "" {
+			_ = os.Remove(confFile)
+			continue
+		}
+		var b strings.Builder
+		b.WriteString("# Managed by Stako Panel\n")
+		b.WriteString("listen_addresses = '*'\n")
+		b.WriteString("wal_level = " + walLevel + "\n")
+		b.WriteString(fmt.Sprintf("max_wal_senders = %d\n", maxSenders))
+		b.WriteString(fmt.Sprintf("wal_keep_size = %dMB\n", walKeepMB))
+		if role == "standby" && primaryHost != "" {
+			b.WriteString("hot_standby = on\n")
+			b.WriteString(fmt.Sprintf("primary_conninfo = 'host=%s port=%d user=%s password=%s'\n", primaryHost, primaryPort, repUser, repPass))
+		}
+		if err := os.WriteFile(confFile, []byte(b.String()), 0o644); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+	}
+
+	if role == "primary" && agentproto.ValidateDBIdent(repUser) == nil && repPass != "" {
+		sql := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE ROLE %s WITH REPLICATION LOGIN PASSWORD '%s'; ELSE ALTER ROLE %s WITH REPLICATION LOGIN PASSWORD '%s'; END IF; END $$;",
+			repUser, repUser, strings.ReplaceAll(repPass, "'", "''"), repUser, strings.ReplaceAll(repPass, "'", "''"))
+		_ = exec.Command("sudo", "-u", "postgres", "psql", "-c", sql).Run()
+	}
+
+	if hostsRaw, ok := args["standby_hosts"].([]any); ok && role == "primary" {
+		for _, md := range pgMainDirs() {
+			hbaPath := filepath.Join(md, "pg_hba.conf")
+			if b, err := os.ReadFile(hbaPath); err == nil {
+				lines := strings.Split(string(b), "\n")
+				var filtered []string
+				for _, l := range lines {
+					if !strings.Contains(l, "# stako-repl") {
+						filtered = append(filtered, l)
+					}
+				}
+				for _, hr := range hostsRaw {
+					if h, ok := hr.(string); ok && strings.TrimSpace(h) != "" {
+						filtered = append(filtered, fmt.Sprintf("host replication %s %s scram-sha-256 # stako-repl", repUser, strings.TrimSpace(h)))
+					}
+				}
+				_ = os.WriteFile(hbaPath, []byte(strings.Join(filtered, "\n")), 0o640)
+			}
+		}
+	}
+
+	logger.Info("applied postgresql replication config", "role", role)
+	return runExec(resp, false, logger, "systemctl", "reload-or-restart", "postgresql")
+}
+
+func getPGReplicationStatus(resp agentproto.Response, dryRun bool) agentproto.Response {
+	if dryRun {
+		resp.OK = true
+		resp.Data = map[string]any{
+			"pgbouncer_active":  false,
+			"in_recovery":       false,
+			"replication_peers": []any{},
+		}
+		return resp
+	}
+	pgbActive := false
+	if out, err := exec.Command("systemctl", "is-active", "pgbouncer").Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+		pgbActive = true
+	}
+	inRecovery := false
+	if out, err := exec.Command("sudo", "-u", "postgres", "psql", "-tAc", "SELECT pg_is_in_recovery();").Output(); err == nil {
+		inRecovery = strings.TrimSpace(string(out)) == "t"
+	}
+	peers := []string{}
+	if out, err := exec.Command("sudo", "-u", "postgres", "psql", "-tAc", "SELECT client_addr || ' (' || state || ', lag=' || COALESCE(pg_wal_lsn_diff(sent_lsn, replay_lsn)::text, '0') || 'B)' FROM pg_stat_replication;").Output(); err == nil {
+		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if strings.TrimSpace(l) != "" {
+				peers = append(peers, l)
+			}
+		}
+	}
+	resp.OK = true
+	resp.Data = map[string]any{
+		"pgbouncer_active":  pgbActive,
+		"in_recovery":       inRecovery,
+		"replication_peers": peers,
+	}
+	return resp
+}
+
+func applyPGPITR(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
+	action, _ := args["action"].(string) // "config", "basebackup", "restore"
+	if action == "" {
+		action = "config"
+	}
+	enabled, _ := args["enabled"].(bool)
+	archiveDir, _ := args["archive_dir"].(string)
+	if archiveDir == "" {
+		archiveDir = "/var/lib/postgresql/wal_archive"
+	}
+	targetTime, _ := args["target_time"].(string)
+
+	if dryRun {
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] postgresql PITR action=%s enabled=%v archive_dir=%s target_time=%s", action, enabled, archiveDir, targetTime)
+		return resp
+	}
+
+	switch action {
+	case "basebackup":
+		backupDir := filepath.Join("/var/lib/postgresql/base_backups", time.Now().UTC().Format("20060102-150405"))
+		_ = os.MkdirAll(filepath.Dir(backupDir), 0o700)
+		return runExec(resp, false, logger, "sudo", "-u", "postgres", "pg_basebackup", "-D", backupDir, "-Ft", "-z", "-X", "fetch")
+
+	case "restore":
+		if targetTime == "" {
+			resp.Error = "target_time is required for PITR restore"
+			return resp
+		}
+		for _, d := range pgConfDirs() {
+			recConf := filepath.Join(d, "92-stako-pitr-restore.conf")
+			cfg := fmt.Sprintf("# Managed by Stako Panel\nrestore_command = 'cp %s/%%f %%p'\nrecovery_target_time = '%s'\nrecovery_target_action = 'promote'\n", archiveDir, targetTime)
+			_ = os.WriteFile(recConf, []byte(cfg), 0o644)
+		}
+		if dataDirs, err := filepath.Glob("/var/lib/postgresql/*/main"); err == nil {
+			for _, dd := range dataDirs {
+				_ = os.WriteFile(filepath.Join(dd, "recovery.signal"), []byte(""), 0o644)
+			}
+		}
+		return runExec(resp, false, logger, "systemctl", "restart", "postgresql")
+
+	default:
+		_ = os.MkdirAll(archiveDir, 0o700)
+		for _, d := range pgConfDirs() {
+			confFile := filepath.Join(d, "91-stako-pitr.conf")
+			if !enabled {
+				_ = os.Remove(confFile)
+				continue
+			}
+			cfg := fmt.Sprintf("# Managed by Stako Panel\narchive_mode = on\narchive_command = 'test ! -f %s/%%f && cp %%p %s/%%f'\n", archiveDir, archiveDir)
+			if err := os.WriteFile(confFile, []byte(cfg), 0o644); err != nil {
+				resp.Error = err.Error()
+				return resp
+			}
+		}
+		logger.Info("applied postgresql PITR config", "enabled", enabled, "archive_dir", archiveDir)
+		return runExec(resp, false, logger, "systemctl", "reload-or-restart", "postgresql")
+	}
 }

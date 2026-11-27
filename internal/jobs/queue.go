@@ -166,6 +166,8 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdWPUpdate
 	case "wp.staging":
 		cmd = agentproto.CmdWPStaging
+	case "pg.pitr_basebackup", "pg.pitr_restore":
+		cmd = agentproto.CmdPGPITRApply
 	case "panel.import":
 		cmd = agentproto.CmdPanelImport
 	case "migration.export":

@@ -1248,3 +1248,82 @@ func TestWordPressToolkit(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestPostgreSQLAdvancedPgBouncerReplicationPITR(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Get initial config
+	if rec := doReq(t, h, "GET", "/api/v1/databases/postgres/advanced", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("get pg advanced = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Configure PgBouncer
+	if rec := doReq(t, h, "PUT", "/api/v1/databases/postgres/pgbouncer", map[string]any{
+		"enabled":           true,
+		"listen_port":       6432,
+		"pool_mode":         "transaction",
+		"max_client_conn":   300,
+		"default_pool_size": 25,
+		"reserve_pool_size": 5,
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("set pgbouncer = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Configure Replication (password must not leak in GET)
+	if rec := doReq(t, h, "PUT", "/api/v1/databases/postgres/replication", map[string]any{
+		"role":             "primary",
+		"wal_level":        "replica",
+		"max_wal_senders":  10,
+		"wal_keep_size_mb": 512,
+		"replication_user": "replicator",
+		"replication_pass": "repl-secret-pw-99",
+		"standby_hosts":    []string{"10.0.0.12/32"},
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("set replication = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, "GET", "/api/v1/databases/postgres/advanced", nil, cookies, "")
+	if rec.Code != 200 {
+		t.Fatalf("get pg advanced = %d: %s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("repl-secret-pw-99")) {
+		t.Fatalf("replication password leaked in GET /api/v1/databases/postgres/advanced")
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"has_replication_password":true`)) {
+		t.Fatalf("expected has_replication_password:true, got %s", rec.Body.String())
+	}
+
+	// Configure PITR + Basebackup + Restore
+	if rec := doReq(t, h, "PUT", "/api/v1/databases/postgres/pitr", map[string]any{
+		"enabled":        true,
+		"archive_dir":    "/var/lib/postgresql/wal_archive",
+		"retention_days": 14,
+	}, cookies, csrf); rec.Code != 200 {
+		t.Fatalf("set pitr = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/databases/postgres/pitr/basebackup", nil, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("pitr basebackup = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(t, h, "POST", "/api/v1/databases/postgres/pitr/restore", map[string]any{
+		"target_time": "2026-11-27T08:00:00Z",
+	}, cookies, csrf); rec.Code != 202 {
+		t.Fatalf("pitr restore = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

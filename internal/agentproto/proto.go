@@ -92,6 +92,10 @@ const (
 	CmdWPStaging            = "wp.staging"
 	CmdWPSecurityHarden     = "wp.harden"
 	CmdWPAutoLogin          = "wp.autologin"
+	CmdPGPoolApply          = "pg.pool_apply"
+	CmdPGReplicationApply   = "pg.replication_apply"
+	CmdPGReplicationStatus  = "pg.replication_status"
+	CmdPGPITRApply          = "pg.pitr_apply"
 )
 
 type Request struct {

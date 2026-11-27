@@ -145,6 +145,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/databases", s.requireAuth(s.handleCreateDatabase))
 	mux.HandleFunc("DELETE /api/v1/databases/{id}", s.requireAuth(s.handleDeleteDatabase))
 	mux.HandleFunc("POST /api/v1/databases/{id}/backup", s.requireAuth(s.handleBackupDatabase))
+	mux.HandleFunc("GET /api/v1/databases/postgres/advanced", s.requireAuth(s.handleGetPGAdvanced))
+	mux.HandleFunc("PUT /api/v1/databases/postgres/pgbouncer", s.requireAuth(s.handleSetPgBouncer))
+	mux.HandleFunc("PUT /api/v1/databases/postgres/replication", s.requireAuth(s.handleSetPGReplication))
+	mux.HandleFunc("PUT /api/v1/databases/postgres/pitr", s.requireAuth(s.handleSetPGPITR))
+	mux.HandleFunc("POST /api/v1/databases/postgres/pitr/basebackup", s.requireAuth(s.handlePGPITRBaseBackup))
+	mux.HandleFunc("POST /api/v1/databases/postgres/pitr/restore", s.requireAuth(s.handlePGPITRRestore))
 
 	// FTP / SFTP (7.7)
 	mux.HandleFunc("GET /api/v1/ftp", s.requireAuth(s.handleListFTP))
