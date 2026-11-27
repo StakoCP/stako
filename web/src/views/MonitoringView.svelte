@@ -1,16 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ActionIcon from '../components/ActionIcon.svelte';
   import Modal from '../components/Modal.svelte';
   import { api, ApiError } from '../lib/api';
   import { formatDateTime } from '../lib/format';
   import { fmt, i18n } from '../lib/i18n.svelte';
   import { toast } from '../lib/toast.svelte';
-  import type { AlertChannel, AlertRule, MonitoringMetrics } from '../lib/types';
+  import type { AlertChannel, AlertRule, MonitoringMetrics, UptimeMonitor } from '../lib/types';
 
   let metrics = $state<MonitoringMetrics | null>(null);
   let alerts = $state<AlertRule[]>([]);
+  let monitors = $state<UptimeMonitor[]>([]);
   let loadingMetrics = $state(true);
   let loadingAlerts = $state(true);
+  let loadingMonitors = $state(true);
+  let checkingId = $state<string | null>(null);
 
   let localeCode = $derived(i18n.locale === 'id' ? 'id-ID' : 'en-US');
 
@@ -26,6 +30,20 @@
   // Delete Alert modal
   let deleteTarget = $state<AlertRule | null>(null);
   let deleting = $state(false);
+
+  // Create Uptime Monitor modal
+  let createMonitorOpen = $state(false);
+  let mDomain = $state('');
+  let mUrl = $state('');
+  let mExpectedStatus = $state(200);
+  let mIntervalSec = $state(300);
+  let mPublicStatus = $state(true);
+  let monitorFormError = $state('');
+  let savingMonitor = $state(false);
+
+  // Delete Uptime Monitor modal
+  let deleteMonitorTarget = $state<UptimeMonitor | null>(null);
+  let deletingMonitor = $state(false);
 
   function clampPct(val: number): number {
     return Math.max(0, Math.min(100, Math.round(val)));
@@ -54,9 +72,22 @@
     }
   }
 
+  async function loadMonitors() {
+    loadingMonitors = true;
+    try {
+      const res = await api.get<{ items?: UptimeMonitor[] } | UptimeMonitor[]>('/monitoring/uptime');
+      monitors = Array.isArray(res) ? res : (res.items ?? []);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      loadingMonitors = false;
+    }
+  }
+
   function refreshAll() {
     loadMetrics();
     loadAlerts();
+    loadMonitors();
   }
 
   onMount(() => {
@@ -113,6 +144,77 @@
       deleting = false;
     }
   }
+
+  function openCreateMonitor() {
+    mDomain = '';
+    mUrl = 'https://';
+    mExpectedStatus = 200;
+    mIntervalSec = 300;
+    mPublicStatus = true;
+    monitorFormError = '';
+    createMonitorOpen = true;
+  }
+
+  async function submitCreateMonitor(e: SubmitEvent) {
+    e.preventDefault();
+    monitorFormError = '';
+    savingMonitor = true;
+    try {
+      await api.post<UptimeMonitor>('/monitoring/uptime', {
+        domain: mDomain.trim(),
+        url: mUrl.trim(),
+        expected_status: Number(mExpectedStatus),
+        interval_sec: Number(mIntervalSec),
+        public_status: mPublicStatus,
+      });
+      toast.success(i18n.t.monitoring.monitorCreated);
+      createMonitorOpen = false;
+      await loadMonitors();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const fieldMsg = err.errors.map((x) => `${x.field}: ${x.message}`).join('; ');
+        monitorFormError = fieldMsg || err.detail || err.title;
+      } else {
+        monitorFormError = i18n.t.common.errorGeneric;
+      }
+    } finally {
+      savingMonitor = false;
+    }
+  }
+
+  async function checkMonitorNow(m: UptimeMonitor) {
+    checkingId = m.id;
+    try {
+      await api.post(`/monitoring/uptime/${m.id}/check`, {});
+      toast.success(i18n.t.monitoring.monitorChecked);
+      await loadMonitors();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      checkingId = null;
+    }
+  }
+
+  async function confirmDeleteMonitor() {
+    if (!deleteMonitorTarget) return;
+    deletingMonitor = true;
+    try {
+      await api.delete(`/monitoring/uptime/${deleteMonitorTarget.id}`);
+      toast.success(i18n.t.monitoring.monitorDeleted);
+      deleteMonitorTarget = null;
+      await loadMonitors();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+      deleteMonitorTarget = null;
+    } finally {
+      deletingMonitor = false;
+    }
+  }
+
+  function formatUptimePct(m: UptimeMonitor): string {
+    if (!m.total_checks) return '-';
+    return `${((m.up_checks / m.total_checks) * 100).toFixed(1)}%`;
+  }
 </script>
 
 <div class="page-header">
@@ -120,7 +222,7 @@
     <h1 class="page-title">{i18n.t.monitoring.title}</h1>
     <p class="page-subtitle">{i18n.t.monitoring.subtitle}</p>
   </div>
-  <button type="button" class="btn btn-sm" onclick={refreshAll} disabled={loadingMetrics || loadingAlerts}>
+  <button type="button" class="btn btn-sm" onclick={refreshAll} disabled={loadingMetrics || loadingAlerts || loadingMonitors}>
     {i18n.t.common.refresh}
   </button>
 </div>
@@ -215,6 +317,102 @@
     </table>
   </div>
 {/if}
+
+<hr class="section-divider" />
+
+<div class="toolbar">
+  <h2 class="section-heading">{i18n.t.monitoring.uptimeTitle}</h2>
+  <div class="toolbar-filters">
+    <a href="#/status" class="btn btn-sm">{i18n.t.monitoring.statusPage}</a>
+    <button type="button" class="btn btn-sm btn-primary" onclick={openCreateMonitor}>
+      + {i18n.t.monitoring.addMonitor}
+    </button>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>{i18n.t.monitoring.uptimeDomain}</th>
+        <th>{i18n.t.monitoring.uptimeStatus}</th>
+        <th>{i18n.t.monitoring.httpLatency}</th>
+        <th>{i18n.t.monitoring.sslExpiry}</th>
+        <th>{i18n.t.monitoring.domainExpiry}</th>
+        <th>{i18n.t.monitoring.uptimePct}</th>
+        <th>{i18n.t.common.actions}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {#if loadingMonitors && monitors.length === 0}
+        <tr>
+          <td colspan="7" class="empty-state">{i18n.t.common.loading}</td>
+        </tr>
+      {:else if monitors.length === 0}
+        <tr>
+          <td colspan="7" class="empty-state">{i18n.t.monitoring.noMonitors}</td>
+        </tr>
+      {:else}
+        {#each monitors as m (m.id)}
+          <tr>
+            <td>
+              <div><strong>{m.domain}</strong></div>
+              <div class="form-hint mono">{m.url}</div>
+            </td>
+            <td>
+              <span
+                class="badge"
+                class:badge-success={m.status === 'up'}
+                class:badge-warning={m.status === 'degraded'}
+                class:badge-danger={m.status === 'down'}
+                class:badge-info={m.status !== 'up' && m.status !== 'degraded' && m.status !== 'down'}
+              >
+                {m.status || i18n.t.monitoring.statusUnknown}
+              </span>
+            </td>
+            <td class="mono">
+              {m.last_http_status ? `${m.last_http_status} (${m.last_latency_ms}ms)` : '-'}
+            </td>
+            <td>
+              {m.ssl_expires_at || m.ssl_days_left > 0
+                ? fmt(i18n.t.monitoring.daysLeft, { days: m.ssl_days_left })
+                : '-'}
+            </td>
+            <td>
+              {m.domain_expires_at || m.domain_days_left > 0
+                ? fmt(i18n.t.monitoring.daysLeft, { days: m.domain_days_left })
+                : '-'}
+            </td>
+            <td>{formatUptimePct(m)}</td>
+            <td>
+              <div class="table-actions">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.monitoring.checkNow}
+                  aria-label={i18n.t.monitoring.checkNow}
+                  onclick={() => checkMonitorNow(m)}
+                  disabled={checkingId === m.id}
+                >
+                  <ActionIcon name="test" />
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon btn-danger"
+                  title={i18n.t.common.delete}
+                  aria-label={i18n.t.common.delete}
+                  onclick={() => (deleteMonitorTarget = m)}
+                >
+                  <ActionIcon name="delete" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        {/each}
+      {/if}
+    </tbody>
+  </table>
+</div>
 
 <hr class="section-divider" />
 
@@ -341,6 +539,101 @@
     </button>
     <button type="button" class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
       {deleting ? i18n.t.common.loading : i18n.t.common.delete}
+    </button>
+  </div>
+</Modal>
+
+<Modal
+  open={createMonitorOpen}
+  title={i18n.t.monitoring.addMonitor}
+  onclose={() => (createMonitorOpen = false)}
+>
+  <form onsubmit={submitCreateMonitor}>
+    {#if monitorFormError}
+      <div class="alert alert-danger" role="alert">{monitorFormError}</div>
+    {/if}
+    <div class="form-group">
+      <label class="form-label" for="monitor-domain">{i18n.t.monitoring.monitorDomain}</label>
+      <input
+        id="monitor-domain"
+        class="form-control"
+        type="text"
+        bind:value={mDomain}
+        placeholder={i18n.t.monitoring.monitorDomainPlaceholder}
+        required
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="monitor-url">{i18n.t.monitoring.monitorUrl}</label>
+      <input
+        id="monitor-url"
+        class="form-control mono"
+        type="url"
+        bind:value={mUrl}
+        placeholder={i18n.t.monitoring.monitorUrlPlaceholder}
+        required
+      />
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="monitor-status">{i18n.t.monitoring.expectedStatus}</label>
+        <input
+          id="monitor-status"
+          class="form-control"
+          type="number"
+          min="100"
+          max="599"
+          bind:value={mExpectedStatus}
+          required
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="monitor-interval">{i18n.t.monitoring.intervalSec}</label>
+        <input
+          id="monitor-interval"
+          class="form-control"
+          type="number"
+          min="30"
+          max="86400"
+          bind:value={mIntervalSec}
+          required
+        />
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-row">
+        <input type="checkbox" bind:checked={mPublicStatus} />
+        <span>{i18n.t.monitoring.publicStatus}</span>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick={() => (createMonitorOpen = false)}>
+        {i18n.t.common.cancel}
+      </button>
+      <button type="submit" class="btn btn-primary" disabled={savingMonitor}>
+        {savingMonitor ? i18n.t.common.loading : i18n.t.common.create}
+      </button>
+    </div>
+  </form>
+</Modal>
+
+<Modal
+  open={deleteMonitorTarget !== null}
+  title={i18n.t.monitoring.deleteMonitorTitle}
+  onclose={() => (deleteMonitorTarget = null)}
+>
+  <p>{fmt(i18n.t.monitoring.deleteMonitorBody, { domain: deleteMonitorTarget?.domain ?? '' })}</p>
+  <div class="modal-footer">
+    <button type="button" class="btn" onclick={() => (deleteMonitorTarget = null)}>
+      {i18n.t.common.cancel}
+    </button>
+    <button
+      type="button"
+      class="btn btn-danger"
+      onclick={confirmDeleteMonitor}
+      disabled={deletingMonitor}
+    >
+      {deletingMonitor ? i18n.t.common.loading : i18n.t.common.delete}
     </button>
   </div>
 </Modal>

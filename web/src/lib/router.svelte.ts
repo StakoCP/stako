@@ -22,6 +22,7 @@ export type RouteName =
   | 'firewall'
   | 'security'
   | 'monitoring'
+  | 'status'
   | 'logs'
   | 'nodes'
   | 'migrations'
@@ -69,6 +70,7 @@ function parseHash(): RouteMatch {
   if (path === '/firewall') return { name: 'firewall', params: {}, path };
   if (path === '/security') return { name: 'security', params: {}, path };
   if (path === '/monitoring') return { name: 'monitoring', params: {}, path };
+  if (path === '/status') return { name: 'status', params: {}, path };
   if (path === '/logs') return { name: 'logs', params: {}, path };
   if (path === '/nodes') return { name: 'nodes', params: {}, path };
   if (path === '/migrations') return { name: 'migrations', params: {}, path };

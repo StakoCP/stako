@@ -1005,3 +1005,75 @@ func TestMigrationsExportInspectImportAndTransfer(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestUptimeMonitoringAndPublicStatusPage(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	// Start a local test HTTP server as the monitored target
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	// Create uptime monitor
+	rec = doReq(t, h, "POST", "/api/v1/monitoring/uptime", map[string]any{
+		"domain":          "app.example.local",
+		"url":             ts.URL + "/",
+		"interval_sec":    60,
+		"expected_status": 200,
+		"public_status":   true,
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create uptime monitor = %d: %s", rec.Code, rec.Body.String())
+	}
+	var mon struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &mon)
+
+	// Run check
+	rec = doReq(t, h, "POST", "/api/v1/monitoring/uptime/"+mon.ID+"/check", nil, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("check uptime monitor = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"up"`)) {
+		t.Fatalf("expected status up, got %s", rec.Body.String())
+	}
+
+	// List monitors
+	if rec := doReq(t, h, "GET", "/api/v1/monitoring/uptime", nil, cookies, ""); rec.Code != 200 {
+		t.Fatalf("list uptime = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Public status page (no cookies / unauthenticated)
+	rec = doReq(t, h, "GET", "/api/v1/status", nil, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("public status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"overall_status":"operational"`)) {
+		t.Fatalf("expected operational status, got %s", rec.Body.String())
+	}
+
+	// Delete monitor
+	if rec := doReq(t, h, "DELETE", "/api/v1/monitoring/uptime/"+mon.ID, nil, cookies, csrf); rec.Code != 204 {
+		t.Fatalf("delete uptime = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

@@ -33,6 +33,7 @@
   import PackagesView from '../views/PackagesView.svelte';
   import SecurityView from '../views/SecurityView.svelte';
   import ServicesView from '../views/ServicesView.svelte';
+  import StatusPageView from '../views/StatusPageView.svelte';
   import SystemConfigsView from '../views/SystemConfigsView.svelte';
   import SystemServicesView from '../views/SystemServicesView.svelte';
   import TerminalView from '../views/TerminalView.svelte';
@@ -46,6 +47,7 @@
 
   $effect(() => {
     if (!auth.initialized) return;
+    if (router.current.name === 'status') return;
     if (!auth.user && router.current.name !== 'login') {
       router.navigate('/login');
     } else if (auth.user && auth.twoFactorRequired && router.current.name !== '2fa-setup') {
@@ -60,7 +62,9 @@
   });
 </script>
 
-{#if !auth.initialized}
+{#if router.current.name === 'status'}
+  <StatusPageView />
+{:else if !auth.initialized}
   <div class="auth-page">
     <p>{i18n.t.common.loading}</p>
   </div>

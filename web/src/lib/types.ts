@@ -673,3 +673,47 @@ export interface LogShippingConfig {
   loki_labels: string;
   loki_tls_skip_verify: boolean;
 }
+
+export interface UptimeMonitor {
+  id: string;
+  user_id: string;
+  domain: string;
+  url: string;
+  interval_sec: number;
+  expected_status: number;
+  status: string;
+  last_http_status: number;
+  last_latency_ms: number;
+  last_error: string;
+  ssl_expires_at: string;
+  ssl_days_left: number;
+  ssl_issuer: string;
+  domain_expires_at: string;
+  domain_days_left: number;
+  total_checks: number;
+  up_checks: number;
+  public_status: boolean;
+  last_checked_at: string;
+  created_at: string;
+}
+
+export interface PublicStatusMonitor {
+  id: string;
+  domain: string;
+  url: string;
+  status: string;
+  last_http_status: number;
+  last_latency_ms: number;
+  ssl_expires_at: string;
+  ssl_days_left: number;
+  domain_expires_at: string;
+  domain_days_left: number;
+  uptime_pct: number;
+  last_checked_at: string;
+}
+
+export interface PublicStatusResponse {
+  overall_status: string;
+  checked_at: string;
+  monitors: PublicStatusMonitor[];
+}

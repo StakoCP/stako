@@ -65,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Public
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
+	mux.HandleFunc("GET /api/v1/status", s.handlePublicStatus)
 	mux.HandleFunc("GET /api/v1/openapi.json", s.handleOpenAPIJSON)
 	mux.HandleFunc("GET /api/v1/openapi.yaml", s.handleOpenAPIYAML)
 	mux.HandleFunc("GET /api/v1/docs", s.handleOpenAPIDocs)
@@ -252,6 +253,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/monitoring/alerts", s.requireAuth(s.handleListAlerts))
 	mux.HandleFunc("POST /api/v1/monitoring/alerts", s.requireAuth(s.handleCreateAlert))
 	mux.HandleFunc("DELETE /api/v1/monitoring/alerts/{id}", s.requireAuth(s.handleDeleteAlert))
+	mux.HandleFunc("GET /api/v1/monitoring/uptime", s.requireAuth(s.handleListUptimeMonitors))
+	mux.HandleFunc("POST /api/v1/monitoring/uptime", s.requireAuth(s.handleCreateUptimeMonitor))
+	mux.HandleFunc("POST /api/v1/monitoring/uptime/{id}/check", s.requireAuth(s.handleCheckUptimeMonitor))
+	mux.HandleFunc("DELETE /api/v1/monitoring/uptime/{id}", s.requireAuth(s.handleDeleteUptimeMonitor))
 
 	// Web Terminal (7.8 FR-S5)
 	mux.HandleFunc("POST /api/v1/terminal/exec", s.requireAuth(s.handleTerminalExec))
