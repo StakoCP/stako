@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Installation &amp; Simulator — Stako Control Panel</title>
+  <meta name="description" content="Simulator generator perintah install.sh Stako: pilih preset atau paket kustom dan salin perintah instalasi." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-nav">
+    <div class="container nav-inner">
+      <a href="index.html" class="brand"><span class="brand-badge">S</span><span>Stako</span></a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="about.html">About</a>
+        <a href="installation.html" class="active">Installation</a>
+        <a href="contact.html">Contact</a>
+        <a href="license.html">License</a>
+        <a href="https://github.com/StakoCP/stako" target="_blank" rel="noopener" class="btn btn-sm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="page-head">
+    <div class="container">
+      <h1>Instalasi &amp; Simulator <code>install.sh</code></h1>
+      <p>Pilih preset atau centang paket yang ingin Anda install pada server Ubuntu 22.04 / 24.04 LTS. Parameter <code>install.sh</code> akan diperbarui otomatis dan siap disalin.</p>
+    </div>
+  </section>
+
+  <main class="section">
+    <div class="container">
+      <div class="card">
+        <h3>1. Pilih Preset Profil</h3>
+        <p style="margin-bottom:14px;">Memilih preset otomatis menandai paket bawaan profil tersebut. Anda juga dapat mencentang/menghapus paket secara manual untuk mode <strong>Custom</strong>.</p>
+        <div class="preset-row">
+          <button type="button" class="preset-btn" data-preset="basic">
+            Basic <span class="badge">Ringan</span>
+            <br /><small>Nginx, PHP 8.4, MariaDB, phpMyAdmin, SSL, Firewall</small>
+          </button>
+          <button type="button" class="preset-btn active" data-preset="standard">
+            Standard <span class="badge">Direkomendasikan</span>
+            <br /><small>+ Apache2, PostgreSQL, Node.js, Docker, Redis, Mail, FTP, Restic</small>
+          </button>
+          <button type="button" class="preset-btn" data-preset="full">
+            Full <span class="badge">Lengkap</span>
+            <br /><small>+ Multi-PHP 8.3/8.5, RabbitMQ, ClamAV, PowerDNS</small>
+          </button>
+          <button type="button" class="preset-btn" data-preset="custom" disabled>
+            Custom
+            <br /><small>Otomatis aktif saat memilih paket manual</small>
+          </button>
+        </div>
+
+        <h3>2. Pilih Paket &amp; Layanan</h3>
+        <div class="pkg-grid">
+          <label class="pkg-item"><input type="checkbox" data-pkg="openssh-server" data-label="OpenSSH Server" checked disabled /><span><strong>OpenSSH Server</strong><small>Wajib (Core)</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="nftables" data-label="nftables Firewall" checked disabled /><span><strong>nftables Firewall</strong><small>Wajib (Core)</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="fail2ban" data-label="Fail2ban IPS" checked disabled /><span><strong>Fail2ban</strong><small>Wajib (Core)</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="nginx" data-label="Nginx Web Server" checked disabled /><span><strong>Nginx</strong><small>Wajib (Core)</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="php84" data-label="PHP 8.4 FPM" checked disabled /><span><strong>PHP 8.4 FPM</strong><small>Wajib (Core)</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="mariadb" data-label="MariaDB + phpMyAdmin" checked disabled /><span><strong>MariaDB + phpMyAdmin</strong><small>Wajib (Core)</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="certbot" data-label="Certbot SSL" checked disabled /><span><strong>Certbot (Let's Encrypt)</strong><small>Wajib (Core)</small></span></label>
+
+          <label class="pkg-item"><input type="checkbox" data-pkg="apache2" data-label="Apache2 (Hybrid Backend)" /><span><strong>Apache2</strong><small>--with-apache</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="postgresql" data-label="PostgreSQL + phpPgAdmin" /><span><strong>PostgreSQL + phpPgAdmin</strong><small>--with-postgres</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="nodejs" data-label="Node.js 22 LTS" /><span><strong>Node.js 22 LTS</strong><small>--with-nodejs</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="docker" data-label="Rootless Docker CE + Compose" /><span><strong>Rootless Docker CE</strong><small>--with-docker</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="redis" data-label="Redis Server" /><span><strong>Redis Server</strong><small>--with-redis</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="mail" data-label="Mail Stack (Postfix, Dovecot, Rspamd)" /><span><strong>Mail Server Stack</strong><small>--with-mail</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="ftp" data-label="ProFTPD Server" /><span><strong>ProFTPD</strong><small>--with-ftp</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="backup" data-label="Restic Backup" /><span><strong>Restic Backup</strong><small>--with-backup</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="multiphp" data-label="Multi-PHP (8.3 &amp; 8.5 FPM)" /><span><strong>Multi-PHP (8.3 &amp; 8.5)</strong><small>--with-multiphp</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="rabbitmq" data-label="RabbitMQ Server" /><span><strong>RabbitMQ</strong><small>--with-rabbitmq</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="clamav" data-label="ClamAV Antivirus" /><span><strong>ClamAV</strong><small>--with-clamav</small></span></label>
+          <label class="pkg-item"><input type="checkbox" data-pkg="dns" data-label="PowerDNS Authoritative Server" /><span><strong>PowerDNS Server</strong><small>--with-dns</small></span></label>
+        </div>
+
+        <h3>3. Opsi Tambahan</h3>
+        <div class="form-row">
+          <label>
+            Versi Release:
+            <input type="text" id="opt-version" class="form-control" value="latest" placeholder="latest atau v1.0.0" />
+          </label>
+          <label class="pkg-item"><input type="checkbox" id="opt-update" /><span>Update Binary Saja (<code>--update</code>)</span></label>
+          <label class="pkg-item"><input type="checkbox" id="opt-skip-upgrade" /><span>Lewati <code>apt upgrade</code> (<code>--skip-upgrade</code>)</span></label>
+          <label class="pkg-item"><input type="checkbox" id="opt-dry-run" /><span>Simulasi Dry-Run (<code>--dry-run</code>)</span></label>
+        </div>
+
+        <div class="cmd-header">
+          <h3>4. Perintah Instalasi Siap Pakai</h3>
+          <div>
+            <span id="copy-status" class="copy-toast"></span>
+            <button type="button" id="copy-install-cmd" class="btn btn-primary btn-sm">Salin Perintah</button>
+          </div>
+        </div>
+        <pre id="install-cmd-output" class="cmd-box"></pre>
+
+        <h3 style="margin-top:18px;">Ringkasan Simulasi Paket</h3>
+        <pre id="install-plan-output" class="cmd-box"></pre>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>© 2026 StakoCP • Released under the MIT License</span>
+      <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+        <a href="license.html">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

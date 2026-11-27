@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About — Stako Control Panel</title>
+  <meta name="description" content="Arsitektur keamanan, filosofi open-source MIT, dan teknologi di balik Stako Control Panel." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-nav">
+    <div class="container nav-inner">
+      <a href="index.html" class="brand"><span class="brand-badge">S</span><span>Stako</span></a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="about.html" class="active">About</a>
+        <a href="installation.html">Installation</a>
+        <a href="contact.html">Contact</a>
+        <a href="license.html">License</a>
+        <a href="https://github.com/StakoCP/stako" target="_blank" rel="noopener" class="btn btn-sm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="page-head">
+    <div class="container">
+      <h1>Tentang Stako</h1>
+      <p>Panel kontrol hosting open-source berlisensi MIT yang menggabungkan performa Go, antarmuka Svelte modern, dan isolasi keamanan berlapis.</p>
+    </div>
+  </section>
+
+  <main class="section">
+    <div class="container">
+      <div class="grid-2">
+        <article class="card">
+          <h3>Arsitektur Dual-Process (Least Privilege)</h3>
+          <p>
+            <code>stako-core</code> berjalan sebagai user non-privileged untuk melayani Web UI, REST API (OpenAPI 3.1),
+            dan SQLite WAL. Semua operasi sistem dieksekusi oleh <code>stako-agent</code> melalui Unix domain socket
+            dengan allowlist perintah yang ketat.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Keamanan Bawaan</h3>
+          <p>
+            Dilengkapi autentikasi TOTP 2FA, CSRF protection, enkripsi amplop AES-256-GCM untuk kredensial,
+            audit log berantai hash (tamper-evident), nftables firewall, Fail2ban, ModSecurity WAF, dan mode Lockdown darurat.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Ekosistem Plugin Komunitas</h3>
+          <p>
+            Komunitas dapat menambahkan modul, webhook event hook, halaman dashboard kustom, serta manifest
+            aplikasi katalog baru tanpa perlu melakukan fork terhadap kode inti Stako.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Teknologi Inti</h3>
+          <p>
+            Backend ditulis dalam Go (single static binary), frontend menggunakan Svelte 5 + Astro yang di-embed ke dalam
+            binary, serta mendukung penuh Ubuntu 22.04 dan 24.04 LTS (<code>amd64</code> &amp; <code>arm64</code>).
+          </p>
+        </article>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>© 2026 StakoCP • Released under the MIT License</span>
+      <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="installation.html">Installation</a>
+        <a href="contact.html">Contact</a>
+        <a href="license.html">License</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

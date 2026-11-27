@@ -20,6 +20,7 @@ case "$ARCH" in
 esac
 FROM_DIR=""
 WITH_DNS="no"
+EXTRA_PKGS=""
 LOG_FILE="/var/log/stako-install.log"
 
 usage() {
@@ -31,6 +32,17 @@ Usage: $0 [options]
   --from-dir PATH                Install Stako binaries from local directory instead of GitHub
   --update                       In-place update of Stako binaries only (preserves DB, keys, and sites)
   --with-dns                     Install PowerDNS server (default: off)
+  --with-apache                  Install Apache2 backend
+  --with-postgres                Install PostgreSQL + phpPgAdmin
+  --with-nodejs                  Install Node.js 22
+  --with-docker                  Install Rootless Docker CE + Compose
+  --with-redis                   Install Redis Server
+  --with-mail                    Install Postfix + Dovecot + Rspamd
+  --with-ftp                     Install ProFTPD
+  --with-backup                  Install Restic backup tool
+  --with-multiphp                Install PHP 8.3 & 8.5 FPM
+  --with-rabbitmq                Install RabbitMQ Server
+  --with-clamav                  Install ClamAV antivirus
   --skip-upgrade                 Skip 'apt-get upgrade'
   --dry-run                      Print reconciliation plan without making changes
   -h, --help                     Show this help
@@ -44,6 +56,17 @@ while [[ $# -gt 0 ]]; do
     --from-dir) FROM_DIR="${2:?}"; shift 2 ;;
     --update) UPDATE_ONLY=1; shift ;;
     --with-dns) WITH_DNS="yes"; shift ;;
+    --with-apache) EXTRA_PKGS="$EXTRA_PKGS apache2"; shift ;;
+    --with-postgres) EXTRA_PKGS="$EXTRA_PKGS postgresql"; shift ;;
+    --with-nodejs) EXTRA_PKGS="$EXTRA_PKGS nodejs"; shift ;;
+    --with-docker) EXTRA_PKGS="$EXTRA_PKGS docker"; shift ;;
+    --with-redis) EXTRA_PKGS="$EXTRA_PKGS redis-server"; shift ;;
+    --with-mail) EXTRA_PKGS="$EXTRA_PKGS mail"; shift ;;
+    --with-ftp) EXTRA_PKGS="$EXTRA_PKGS proftpd-basic"; shift ;;
+    --with-backup) EXTRA_PKGS="$EXTRA_PKGS restic"; shift ;;
+    --with-multiphp) EXTRA_PKGS="$EXTRA_PKGS multiphp"; shift ;;
+    --with-rabbitmq) EXTRA_PKGS="$EXTRA_PKGS rabbitmq-server"; shift ;;
+    --with-clamav) EXTRA_PKGS="$EXTRA_PKGS clamav"; shift ;;
     --skip-upgrade) SKIP_UPGRADE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -177,6 +200,25 @@ install_backend_stack() {
   ensure_pkg "python3-certbot-nginx" "1.21"
 
   if [[ "$PRESET" == "basic" ]]; then
+    for ep in $EXTRA_PKGS; do
+      case "$ep" in
+        apache2) ensure_pkg "apache2" "2.4" ;;
+        postgresql) ensure_pkg "postgresql" "14" ;;
+        nodejs) ensure_pkg "nodejs" "20.0" ;;
+        docker) ensure_pkg "docker-ce" "5:24.0" "docker.io containerd runc"; ensure_pkg "docker-compose-plugin" "2.0" ;;
+        redis-server) ensure_pkg "redis-server" "5:6.0" ;;
+        mail) ensure_pkg "postfix" "3.6"; ensure_pkg "dovecot-core" "1:2.3"; ensure_pkg "dovecot-imapd" "1:2.3"; ensure_pkg "rspamd" "3.0" ;;
+        proftpd-basic) ensure_pkg "proftpd-basic" "1.3" "vsftpd" ;;
+        restic) ensure_pkg "restic" "0.14" ;;
+        multiphp) ensure_pkg "php8.3-fpm" "8.3"; ensure_pkg "php8.5-fpm" "8.5" ;;
+        rabbitmq-server) ensure_pkg "rabbitmq-server" "3.9" ;;
+        clamav) ensure_pkg "clamav" "0.103" ;;
+      esac
+    done
+    if [[ "$WITH_DNS" == "yes" ]]; then
+      ensure_pkg "pdns-server" "4.5" "bind9"
+      ensure_pkg "pdns-backend-sqlite3" "4.5"
+    fi
     return 0
   fi
 

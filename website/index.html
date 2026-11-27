@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stako — Open-Source Hosting Control Panel</title>
+  <meta name="description" content="Stako adalah panel kontrol hosting open-source berlisensi MIT yang cepat, aman, dan modern berbasis Go + Svelte." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-nav">
+    <div class="container nav-inner">
+      <a href="index.html" class="brand">
+        <span class="brand-badge">S</span>
+        <span>Stako</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="index.html" class="active">Home</a>
+        <a href="about.html">About</a>
+        <a href="installation.html">Installation</a>
+        <a href="contact.html">Contact</a>
+        <a href="license.html">License</a>
+        <a href="https://github.com/StakoCP/stako" target="_blank" rel="noopener" class="btn btn-sm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <span class="pill">Open Source • MIT License • Ubuntu 22.04 / 24.04 LTS</span>
+        <h1>Control Panel Hosting Modern, Ringan, dan Aman Berbasis Go</h1>
+        <p>
+          Kelola Nginx &amp; Apache2, multi-PHP, MariaDB &amp; PostgreSQL (PgBouncer + PITR),
+          Rootless Docker, Git Preview Environments, WordPress Toolkit, Mail + SMTP Relay,
+          dan Plugin komunitas dalam satu binary ringan.
+        </p>
+        <div class="hero-actions">
+          <a href="installation.html" class="btn btn-primary">Mulai Instalasi &amp; Simulator</a>
+          <a href="about.html" class="btn">Pelajari Arsitektur</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2 class="section-title">Fitur Unggulan</h2>
+        <p class="section-sub">Dirancang untuk VPS pribadi, agensi web, hingga penyedia hosting skala produksi.</p>
+        <div class="grid">
+          <article class="card">
+            <h3>Web Server &amp; Cache CDN</h3>
+            <p>Nginx, Apache2, atau hybrid Nginx+Apache2 dengan Let's Encrypt otomatis, Cloudflare real-IP &amp; purge, Redis Object Cache satu klik, dan Nginx Microcache.</p>
+          </article>
+          <article class="card">
+            <h3>Docker &amp; Git Preview</h3>
+            <p>Rootless Docker + Compose, build dari GitHub atau path lokal, serta Preview Environment otomatis per branch/PR lengkap dengan subdomain reverse proxy.</p>
+          </article>
+          <article class="card">
+            <h3>WordPress Toolkit</h3>
+            <p>Deteksi semua instalasi WordPress, update massal core/plugin/tema, staging satu klik, hardening keamanan, dan auto-login aman.</p>
+          </article>
+          <article class="card">
+            <h3>Database Lanjutan</h3>
+            <p>MariaDB + phpMyAdmin dan PostgreSQL + phpPgAdmin, lengkap dengan PgBouncer connection pooler, streaming replication, dan Point-in-Time Recovery (PITR).</p>
+          </article>
+          <article class="card">
+            <h3>Mail + SMTP Relay</h3>
+            <p>Postfix, Dovecot, Rspamd, DKIM/SPF/DMARC, dan dukungan Smarthost (Amazon SES, Mailgun, Brevo, SendGrid) per server maupun per domain.</p>
+          </article>
+          <article class="card">
+            <h3>Observabilitas &amp; Migrasi</h3>
+            <p>Log terpusat lintas layanan (Loki/Syslog), monitoring uptime &amp; SSL, kesehatan SMART/inode/PSI, project quota per user, serta impor dari HestiaCP, cPanel, &amp; VestaCP.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="card">
+          <div class="cmd-header">
+            <div>
+              <h3>Instalasi Cepat (Standard Preset)</h3>
+              <p>Atau gunakan <a href="installation.html">Simulator Installer</a> untuk memilih paket secara kustom.</p>
+            </div>
+            <a href="installation.html" class="btn btn-primary btn-sm">Buka Simulator</a>
+          </div>
+          <pre class="cmd-box">curl -fsSL https://raw.githubusercontent.com/StakoCP/stako/main/installer/install.sh | sudo bash -s -- --preset standard</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>© 2026 StakoCP • Released under the MIT License</span>
+      <div class="footer-links">
+        <a href="about.html">About</a>
+        <a href="installation.html">Installation</a>
+        <a href="contact.html">Contact</a>
+        <a href="license.html">License</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
