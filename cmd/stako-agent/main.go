@@ -1177,11 +1177,11 @@ logfile /var/log/redis/redis-server-%s.log
 
 	case agentproto.CmdMailDomainAdd:
 		domain, _ := req.Args["domain"].(string)
-		return runExec(resp, dryRun, logger, "stako-mail", "domain-add", domain)
+		return applyMailDomain(resp, dryRun, logger, domain, true)
 
 	case agentproto.CmdMailDomainDel:
 		domain, _ := req.Args["domain"].(string)
-		return runExec(resp, dryRun, logger, "stako-mail", "domain-del", domain)
+		return applyMailDomain(resp, dryRun, logger, domain, false)
 
 	case agentproto.CmdMailRelayApply:
 		if dryRun {
@@ -2215,7 +2215,7 @@ func ensureApacheCloudflareRealIP() {
 
 func ensureDBAdminToolsNginx() bool {
 	p := "/etc/nginx/conf.d/stako-dbtools.conf"
-	if _, err := os.Stat(p); err == nil {
+	if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), "/webmail/") {
 		return false
 	}
 	phpSock := "/run/php/php8.4-fpm.sock"
@@ -2271,6 +2271,80 @@ server {
 `, phpSock, phpSock, roundcubeRoot, roundcubeRoot, phpSock)
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	return os.WriteFile(p, []byte(conf), 0o644) == nil
+}
+
+func applyMailDomain(resp agentproto.Response, dryRun bool, logger *slog.Logger, domain string, add bool) agentproto.Response {
+	if err := agentproto.ValidateDomain(domain); err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if dryRun {
+		action := "add"
+		if !add {
+			action = "delete"
+		}
+		resp.OK = true
+		resp.Output = fmt.Sprintf("[dry-run] mail domain %s: %s", action, domain)
+		return resp
+	}
+
+	vhostDir := filepath.Join("/var/mail/vhosts", domain)
+	if add {
+		_ = os.MkdirAll(vhostDir, 0o750)
+	} else {
+		_ = os.RemoveAll(vhostDir)
+	}
+
+	if _, err := os.Stat("/etc/postfix"); err == nil {
+		const vmdPath = "/etc/postfix/virtual_mailbox_domains"
+		raw, _ := os.ReadFile(vmdPath)
+		var lines []string
+		found := false
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			fields := strings.Fields(trimmed)
+			if len(fields) > 0 && fields[0] == domain {
+				found = true
+				if !add {
+					continue
+				}
+			}
+			lines = append(lines, trimmed)
+		}
+		if add && !found {
+			lines = append(lines, domain+" OK")
+		}
+		content := ""
+		if len(lines) > 0 {
+			content = strings.Join(lines, "\n") + "\n"
+		}
+		if err := os.WriteFile(vmdPath, []byte(content), 0o644); err != nil {
+			resp.Error = fmt.Sprintf("write %s: %v", vmdPath, err)
+			return resp
+		}
+		_ = exec.Command("postconf", "-e", "virtual_mailbox_domains=hash:/etc/postfix/virtual_mailbox_domains").Run()
+		_ = exec.Command("postconf", "-e", "virtual_mailbox_base=/var/mail/vhosts").Run()
+		if out, err := exec.Command("postmap", vmdPath).CombinedOutput(); err != nil {
+			resp.Error = fmt.Sprintf("postmap: %v: %s", err, strings.TrimSpace(string(out)))
+			return resp
+		}
+		_ = exec.Command("systemctl", "reload-or-restart", "postfix").Run()
+	}
+
+	if ensureDBAdminToolsNginx() {
+		_ = exec.Command("systemctl", "reload", "nginx").Run()
+	}
+	logger.Info("applied mail domain", "domain", domain, "add", add)
+	resp.OK = true
+	if add {
+		resp.Output = "Configured mail domain " + domain
+	} else {
+		resp.Output = "Removed mail domain " + domain
+	}
+	return resp
 }
 
 func applyPostfixRelays(resp agentproto.Response, logger *slog.Logger, args map[string]any) agentproto.Response {
