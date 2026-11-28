@@ -450,7 +450,25 @@ func (s *Server) handleOpenAPIYAML(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out)
 }
 
+func requestBaseURL(r *http.Request) string {
+	scheme := "https"
+	if xfp := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); xfp == "http" || xfp == "https" {
+		scheme = xfp
+	} else if r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")) {
+		scheme = "http"
+	}
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		host = "panel.example.com"
+	}
+	return scheme + "://" + host + "/api/v1"
+}
+
 func (s *Server) handleOpenAPIDocs(w http.ResponseWriter, r *http.Request) {
+	baseURL := requestBaseURL(r)
 	spec := buildOpenAPISpec()
 	paths, _ := spec["paths"].(map[string]any)
 	keys := make([]string, 0, len(paths))
@@ -481,7 +499,7 @@ func (s *Server) handleOpenAPIDocs(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			curlCmd := fmt.Sprintf("curl -sS -X %s \\\n  \"https://YOUR_PANEL_HOST:8083/api/v1%s\" \\\n  -H \"Authorization: Bearer $STAKO_TOKEN\"", upperM, p)
+			curlCmd := fmt.Sprintf("curl -sS -X %s \\\n  \"%s%s\" \\\n  -H \"Authorization: Bearer $STAKO_TOKEN\"", upperM, baseURL, p)
 			if reqJSON != "" {
 				curlCmd += " \\\n  -H \"Content-Type: application/json\" \\\n  -d '" + reqJSON + "'"
 			}
@@ -528,17 +546,17 @@ func (s *Server) handleOpenAPIDocs(w http.ResponseWriter, r *http.Request) {
 <p>OpenAPI 3.1: <a href="/api/v1/openapi.json">openapi.json</a> | <a href="/api/v1/openapi.yaml">openapi.yaml</a></p>
 <section class="guide">
   <h2>Cara Request API (Quick Start)</h2>
-  <p>Base URL: <code>https://YOUR_PANEL_HOST:8083/api/v1</code></p>
+  <p>Base URL: <code>%s</code></p>
   <h3>1. Autentikasi dengan API Token (Direkomendasikan)</h3>
   <p>Buat token di dashboard <strong>Account &rarr; API Tokens</strong>, lalu kirim melalui header <code>Authorization: Bearer &lt;TOKEN&gt;</code>:</p>
   <pre>export STAKO_TOKEN="stk_xxxxxxxxxxxxxxxx"
 
 # Contoh GET (List Domains)
-curl -sS "https://YOUR_PANEL_HOST:8083/api/v1/domains" \
+curl -sS "%s/domains" \
   -H "Authorization: Bearer $STAKO_TOKEN"
 
 # Contoh POST (Create Domain)
-curl -sS -X POST "https://YOUR_PANEL_HOST:8083/api/v1/domains" \
+curl -sS -X POST "%s/domains" \
   -H "Authorization: Bearer $STAKO_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"domain":"example.com","php_version":"8.4","web_server":"nginx"}'</pre>
@@ -548,5 +566,5 @@ curl -sS -X POST "https://YOUR_PANEL_HOST:8083/api/v1/domains" \
   <p>Semua error mengembalikan JSON standar <strong>RFC 7807</strong> (<code>application/problem+json</code>) dengan field <code>type</code>, <code>title</code>, <code>status</code>, dan <code>detail</code>.</p>
 </section>
 <table><thead><tr><th>Method</th><th>Endpoint</th><th>Tag</th><th>Summary &amp; Examples</th></tr></thead><tbody>%s</tbody></table>
-</body></html>`, html.EscapeString(version.Version), rows.String())
+</body></html>`, html.EscapeString(version.Version), html.EscapeString(baseURL), html.EscapeString(baseURL), html.EscapeString(baseURL), rows.String())
 }
