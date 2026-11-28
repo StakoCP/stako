@@ -160,6 +160,8 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 		cmd = agentproto.CmdBackupRun
 	case "backup.restore":
 		cmd = agentproto.CmdBackupRestore
+	case "backup.prune":
+		cmd = agentproto.CmdBackupPrune
 	case "waf.apply":
 		cmd = agentproto.CmdWAFApply
 	case "git.deploy":

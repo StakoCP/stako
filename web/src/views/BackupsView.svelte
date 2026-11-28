@@ -9,6 +9,7 @@
   import { toast } from '../lib/toast.svelte';
   import type {
     Backup,
+    BackupConfig,
     BackupKind,
     BackupStatus,
     BackupTarget,
@@ -40,6 +41,28 @@
   // Delete modal
   let deleteTarget = $state<Backup | null>(null);
   let deleting = $state(false);
+
+  // Remote config & retention policy (admin only)
+  let configLoading = $state(false);
+  let configSaving = $state(false);
+  let pruning = $state(false);
+  let cfgTarget = $state<BackupTarget>('local');
+  let cfgEndpoint = $state('');
+  let cfgBucket = $state('');
+  let cfgRegion = $state('');
+  let cfgAccessKey = $state('');
+  let cfgSecretKey = $state('');
+  let cfgHasSecret = $state(false);
+  let cfgSftpHost = $state('');
+  let cfgSftpPort = $state(22);
+  let cfgSftpUser = $state('');
+  let cfgSftpPath = $state('');
+  let cfgKeepDaily = $state(7);
+  let cfgKeepWeekly = $state(4);
+  let cfgKeepMonthly = $state(6);
+  let cfgScheduleCron = $state('0 2 * * *');
+
+  let isObjectStorage = $derived(cfgTarget === 's3' || cfgTarget === 'r2' || cfgTarget === 'b2');
 
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
@@ -102,9 +125,81 @@
     }
   }
 
+  async function loadBackupConfig() {
+    if (!isAdmin) return;
+    configLoading = true;
+    try {
+      const cfg = await api.get<BackupConfig>('/backups/config');
+      cfgTarget = cfg.target || 'local';
+      cfgEndpoint = cfg.endpoint || '';
+      cfgBucket = cfg.bucket || '';
+      cfgRegion = cfg.region || '';
+      cfgAccessKey = cfg.access_key || '';
+      cfgSecretKey = '';
+      cfgHasSecret = cfg.has_secret;
+      cfgSftpHost = cfg.sftp_host || '';
+      cfgSftpPort = cfg.sftp_port || 22;
+      cfgSftpUser = cfg.sftp_user || '';
+      cfgSftpPath = cfg.sftp_path || '';
+      cfgKeepDaily = cfg.keep_daily || 7;
+      cfgKeepWeekly = cfg.keep_weekly || 4;
+      cfgKeepMonthly = cfg.keep_monthly || 6;
+      cfgScheduleCron = cfg.schedule_cron || '0 2 * * *';
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      configLoading = false;
+    }
+  }
+
+  async function saveBackupConfig(e: SubmitEvent) {
+    e.preventDefault();
+    configSaving = true;
+    try {
+      await api.put('/backups/config', {
+        target: cfgTarget,
+        endpoint: cfgEndpoint,
+        bucket: cfgBucket,
+        region: cfgRegion,
+        access_key: cfgAccessKey,
+        secret_key: cfgSecretKey,
+        sftp_host: cfgSftpHost,
+        sftp_port: Number(cfgSftpPort) || 22,
+        sftp_user: cfgSftpUser,
+        sftp_path: cfgSftpPath,
+        keep_daily: Number(cfgKeepDaily) || 7,
+        keep_weekly: Number(cfgKeepWeekly) || 4,
+        keep_monthly: Number(cfgKeepMonthly) || 6,
+        schedule_cron: cfgScheduleCron,
+      });
+      if (cfgSecretKey.trim() !== '') {
+        cfgHasSecret = true;
+        cfgSecretKey = '';
+      }
+      toast.success(i18n.t.backups.config_saved);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      configSaving = false;
+    }
+  }
+
+  async function pruneBackups() {
+    pruning = true;
+    try {
+      const res = await api.post<{ job_id: string | null }>('/backups/prune');
+      notifyJob(i18n.t.backups.prune_started, res.job_id);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail || err.title : i18n.t.common.errorGeneric);
+    } finally {
+      pruning = false;
+    }
+  }
+
   onMount(() => {
     loadBackups();
     loadUsers();
+    loadBackupConfig();
   });
 
   function openCreate() {
@@ -260,6 +355,190 @@
   </table>
 </div>
 
+{#if isAdmin}
+  <hr class="section-divider" />
+  <div class="card">
+    <div class="card-header-row">
+      <h2 class="card-title">{i18n.t.backups.remote_config}</h2>
+      <button
+        type="button"
+        class="btn btn-sm"
+        onclick={pruneBackups}
+        disabled={pruning || configLoading}
+      >
+        {pruning ? i18n.t.common.loading : i18n.t.backups.prune_now}
+      </button>
+    </div>
+
+    {#if configLoading}
+      <p>{i18n.t.common.loading}</p>
+    {:else}
+      <form onsubmit={saveBackupConfig}>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="bk-cfg-target">{i18n.t.backups.target}</label>
+            <select id="bk-cfg-target" class="form-control" bind:value={cfgTarget}>
+              <option value="local">{i18n.t.backups.targetLocal}</option>
+              <option value="s3">{i18n.t.backups.targetS3}</option>
+              <option value="r2">{i18n.t.backups.target_r2}</option>
+              <option value="b2">{i18n.t.backups.target_b2}</option>
+              <option value="sftp">{i18n.t.backups.targetSftp}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="bk-cfg-cron">{i18n.t.backups.schedule_cron}</label>
+            <input
+              id="bk-cfg-cron"
+              type="text"
+              class="form-control mono"
+              bind:value={cfgScheduleCron}
+              placeholder="0 2 * * *"
+            />
+          </div>
+        </div>
+
+        {#if isObjectStorage}
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-endpoint">{i18n.t.backups.endpoint}</label>
+              <input
+                id="bk-cfg-endpoint"
+                type="text"
+                class="form-control"
+                bind:value={cfgEndpoint}
+                placeholder="https://s3.example.com"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-bucket">{i18n.t.backups.bucket}</label>
+              <input
+                id="bk-cfg-bucket"
+                type="text"
+                class="form-control"
+                bind:value={cfgBucket}
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-region">{i18n.t.backups.region}</label>
+              <input
+                id="bk-cfg-region"
+                type="text"
+                class="form-control"
+                bind:value={cfgRegion}
+                placeholder="us-east-1"
+              />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-access-key">{i18n.t.backups.access_key}</label>
+              <input
+                id="bk-cfg-access-key"
+                type="text"
+                class="form-control mono"
+                bind:value={cfgAccessKey}
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-secret-key">{i18n.t.backups.secret_key}</label>
+              <input
+                id="bk-cfg-secret-key"
+                type="password"
+                class="form-control mono"
+                bind:value={cfgSecretKey}
+                placeholder={cfgHasSecret ? '••••••••' : ''}
+              />
+            </div>
+          </div>
+        {:else if cfgTarget === 'sftp'}
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-sftp-host">{i18n.t.backups.sftp_host}</label>
+              <input
+                id="bk-cfg-sftp-host"
+                type="text"
+                class="form-control"
+                bind:value={cfgSftpHost}
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-sftp-port">{i18n.t.backups.sftp_port}</label>
+              <input
+                id="bk-cfg-sftp-port"
+                type="number"
+                min="1"
+                max="65535"
+                class="form-control"
+                bind:value={cfgSftpPort}
+              />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-sftp-user">{i18n.t.backups.sftp_user}</label>
+              <input
+                id="bk-cfg-sftp-user"
+                type="text"
+                class="form-control"
+                bind:value={cfgSftpUser}
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="bk-cfg-sftp-path">{i18n.t.backups.sftp_path}</label>
+              <input
+                id="bk-cfg-sftp-path"
+                type="text"
+                class="form-control mono"
+                bind:value={cfgSftpPath}
+                placeholder="/backups/stako"
+              />
+            </div>
+          </div>
+        {/if}
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="bk-cfg-keep-daily">{i18n.t.backups.keep_daily}</label>
+            <input
+              id="bk-cfg-keep-daily"
+              type="number"
+              min="1"
+              class="form-control"
+              bind:value={cfgKeepDaily}
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="bk-cfg-keep-weekly">{i18n.t.backups.keep_weekly}</label>
+            <input
+              id="bk-cfg-keep-weekly"
+              type="number"
+              min="1"
+              class="form-control"
+              bind:value={cfgKeepWeekly}
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="bk-cfg-keep-monthly">{i18n.t.backups.keep_monthly}</label>
+            <input
+              id="bk-cfg-keep-monthly"
+              type="number"
+              min="1"
+              class="form-control"
+              bind:value={cfgKeepMonthly}
+            />
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" disabled={configSaving}>
+          {configSaving ? i18n.t.common.saving : i18n.t.backups.save_config}
+        </button>
+      </form>
+    {/if}
+  </div>
+{/if}
+
 <Modal open={createOpen} title={i18n.t.backups.createBackup} onclose={() => (createOpen = false)}>
   <form id="backup-form" onsubmit={submitCreate}>
     {#if formError}
@@ -281,6 +560,8 @@
         <select id="bk-target" class="form-control" bind:value={fTarget}>
           <option value="local">{i18n.t.backups.targetLocal}</option>
           <option value="s3">{i18n.t.backups.targetS3}</option>
+          <option value="r2">{i18n.t.backups.target_r2}</option>
+          <option value="b2">{i18n.t.backups.target_b2}</option>
           <option value="sftp">{i18n.t.backups.targetSftp}</option>
         </select>
       </div>

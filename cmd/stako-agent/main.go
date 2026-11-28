@@ -3,6 +3,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -1521,27 +1523,90 @@ logfile /var/log/redis/redis-server-%s.log
 			resp.Error = "no backup source directories exist for kind: " + kind
 			return resp
 		}
-		resticArgs, err := ensureResticRepo(logger)
+		resticArgs, resticEnv, err := ensureResticRepo(logger, req.Args)
 		if err != nil {
 			resp.Error = err.Error()
 			return resp
 		}
 		args := append(resticArgs, "backup", "--tag", id, "--tag", kind)
 		args = append(args, paths...)
-		return runExec(resp, false, logger, "restic", args...)
+		return runExecEnv(resp, false, logger, resticEnv, "restic", args...)
 
 	case agentproto.CmdBackupRestore:
 		id, _ := req.Args["id"].(string)
 		if dryRun {
 			return runExec(resp, true, logger, "restic", "restore", id)
 		}
-		resticArgs, err := ensureResticRepo(logger)
+		resticArgs, resticEnv, err := ensureResticRepo(logger, req.Args)
 		if err != nil {
 			resp.Error = err.Error()
 			return resp
 		}
 		args := append(resticArgs, "restore", "latest", "--tag", id, "--target", "/")
-		return runExec(resp, false, logger, "restic", args...)
+		return runExecEnv(resp, false, logger, resticEnv, "restic", args...)
+
+	case agentproto.CmdBackupPrune:
+		keepDaily := 7
+		keepWeekly := 4
+		keepMonthly := 6
+		if v, ok := req.Args["keep_daily"].(float64); ok && v > 0 {
+			keepDaily = int(v)
+		}
+		if v, ok := req.Args["keep_weekly"].(float64); ok && v > 0 {
+			keepWeekly = int(v)
+		}
+		if v, ok := req.Args["keep_monthly"].(float64); ok && v > 0 {
+			keepMonthly = int(v)
+		}
+		if dryRun {
+			return runExec(resp, true, logger, "restic", "forget", "--prune", "--keep-daily", strconv.Itoa(keepDaily))
+		}
+		resticArgs, resticEnv, err := ensureResticRepo(logger, req.Args)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		args := append(resticArgs, "forget", "--prune",
+			"--keep-daily", strconv.Itoa(keepDaily),
+			"--keep-weekly", strconv.Itoa(keepWeekly),
+			"--keep-monthly", strconv.Itoa(keepMonthly),
+		)
+		return runExecEnv(resp, false, logger, resticEnv, "restic", args...)
+
+	case agentproto.CmdBackupExport:
+		id, _ := req.Args["id"].(string)
+		if dryRun {
+			resp.OK = true
+			resp.Data = map[string]any{}
+			return resp
+		}
+		resticArgs, resticEnv, err := ensureResticRepo(logger, req.Args)
+		if err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		args := append(resticArgs, "dump", "--tag", id, "latest", "/", "--archive", "tar")
+		cmd := exec.Command("restic", args...)
+		if len(resticEnv) > 0 {
+			cmd.Env = append(os.Environ(), resticEnv...)
+		}
+		var outBuf bytes.Buffer
+		cmd.Stdout = &outBuf
+		if err := cmd.Run(); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+		var gzBuf bytes.Buffer
+		gz := gzip.NewWriter(&gzBuf)
+		_, _ = gz.Write(outBuf.Bytes())
+		_ = gz.Close()
+		if gzBuf.Len() > 20*1024*1024 {
+			resp.Error = "archive exceeds 20MB inline download limit"
+			return resp
+		}
+		resp.OK = true
+		resp.Data = map[string]any{"archive_b64": base64.StdEncoding.EncodeToString(gzBuf.Bytes())}
+		return resp
 
 	case agentproto.CmdFileList:
 		p, _ := req.Args["path"].(string)
@@ -2265,10 +2330,38 @@ chdir = /home/%s
 	}
 }
 
-func ensureResticRepo(logger *slog.Logger) ([]string, error) {
+func runExecEnv(resp agentproto.Response, dryRun bool, logger *slog.Logger, extraEnv []string, name string, args ...string) agentproto.Response {
+	if dryRun || len(extraEnv) == 0 {
+		return runExec(resp, dryRun, logger, name, args...)
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), extraEnv...)
+	out, err := cmd.CombinedOutput()
+	resp.Output = strings.TrimSpace(string(out))
+	if err != nil {
+		resp.Error = fmt.Sprintf("%s: %v", name, err)
+		logger.Warn("agent command failed", "cmd", name, "err", err)
+		return resp
+	}
+	resp.OK = true
+	return resp
+}
+
+func ensureResticRepo(logger *slog.Logger, reqArgs map[string]any) ([]string, []string, error) {
 	repo := os.Getenv("RESTIC_REPOSITORY")
+	if r, _ := reqArgs["repo_url"].(string); r != "" {
+		repo = r
+	}
 	if repo == "" {
 		repo = "/var/backups/stako/restic-repo"
+	}
+	var extraEnv []string
+	if rawEnv, ok := reqArgs["repo_env"].(map[string]any); ok {
+		for k, v := range rawEnv {
+			if vs, ok := v.(string); ok && k != "" && vs != "" {
+				extraEnv = append(extraEnv, k+"="+vs)
+			}
+		}
 	}
 	pwFile := os.Getenv("RESTIC_PASSWORD_FILE")
 	if pwFile == "" && os.Getenv("RESTIC_PASSWORD") == "" {
@@ -2277,10 +2370,10 @@ func ensureResticRepo(logger *slog.Logger) ([]string, error) {
 			_ = os.MkdirAll(filepath.Dir(pwFile), 0o750)
 			buf := make([]byte, 32)
 			if _, err := rand.Read(buf); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if err := os.WriteFile(pwFile, []byte(hex.EncodeToString(buf)+"\n"), 0o600); err != nil {
-				return nil, fmt.Errorf("write restic key: %w", err)
+				return nil, nil, fmt.Errorf("write restic key: %w", err)
 			}
 		}
 	}
@@ -2288,16 +2381,36 @@ func ensureResticRepo(logger *slog.Logger) ([]string, error) {
 	if pwFile != "" {
 		baseArgs = append(baseArgs, "--password-file", pwFile)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "config")); os.IsNotExist(err) {
-		_ = os.MkdirAll(repo, 0o750)
+	isRemote := strings.Contains(repo, ":")
+	needsInit := false
+	if !isRemote {
+		if _, err := os.Stat(filepath.Join(repo, "config")); os.IsNotExist(err) {
+			_ = os.MkdirAll(repo, 0o750)
+			needsInit = true
+		}
+	} else {
+		checkArgs := append(append([]string{}, baseArgs...), "snapshots", "--last")
+		chk := exec.Command("restic", checkArgs...)
+		if len(extraEnv) > 0 {
+			chk.Env = append(os.Environ(), extraEnv...)
+		}
+		if chk.Run() != nil {
+			needsInit = true
+		}
+	}
+	if needsInit {
 		initArgs := append(append([]string{}, baseArgs...), "init")
-		out, err := exec.Command("restic", initArgs...).CombinedOutput()
+		cmd := exec.Command("restic", initArgs...)
+		if len(extraEnv) > 0 {
+			cmd.Env = append(os.Environ(), extraEnv...)
+		}
+		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return nil, fmt.Errorf("restic init failed: %v: %s", err, strings.TrimSpace(string(out)))
+			return nil, nil, fmt.Errorf("restic init failed: %v: %s", err, strings.TrimSpace(string(out)))
 		}
 		logger.Info("initialized restic backup repository", "repo", repo)
 	}
-	return baseArgs, nil
+	return baseArgs, extraEnv, nil
 }
 
 func isPkgInstalled(pkg string) bool {

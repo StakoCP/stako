@@ -239,6 +239,9 @@ func (s *Server) Handler() http.Handler {
 	// Backups (7.12, 7.19)
 	mux.HandleFunc("GET /api/v1/backups", s.requireAuth(s.handleListBackups))
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(s.handleCreateBackup))
+	mux.HandleFunc("GET /api/v1/backups/config", s.requireAuth(s.handleGetBackupConfig))
+	mux.HandleFunc("PUT /api/v1/backups/config", s.requireAuth(s.handleSetBackupConfig))
+	mux.HandleFunc("POST /api/v1/backups/prune", s.requireAuth(s.handlePruneBackups))
 	mux.HandleFunc("POST /api/v1/backups/{id}/restore", s.requireAuth(s.handleRestoreBackup))
 	mux.HandleFunc("DELETE /api/v1/backups/{id}", s.requireAuth(s.handleDeleteBackup))
 

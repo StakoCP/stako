@@ -498,8 +498,25 @@ export interface MailQueueItem {
 }
 
 export type BackupKind = 'user_data' | 'system_config';
-export type BackupTarget = 'local' | 's3' | 'sftp';
+export type BackupTarget = 'local' | 's3' | 'r2' | 'b2' | 'sftp';
 export type BackupStatus = 'completed' | 'running' | 'failed';
+
+export interface BackupConfig {
+  target: BackupTarget;
+  endpoint: string;
+  bucket: string;
+  region: string;
+  access_key: string;
+  has_secret: boolean;
+  sftp_host: string;
+  sftp_port: number;
+  sftp_user: string;
+  sftp_path: string;
+  keep_daily: number;
+  keep_weekly: number;
+  keep_monthly: number;
+  schedule_cron: string;
+}
 
 export interface Backup {
   id: string;

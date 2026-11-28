@@ -5,10 +5,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"time"
 
+	"github.com/StakoCP/stako/internal/agentproto"
 	"github.com/StakoCP/stako/internal/crypto"
 )
 
@@ -85,8 +87,24 @@ func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, http.StatusForbidden, "forbidden", "Forbidden", "")
 		return
 	}
+	if r.URL.Query().Get("format") != "manifest" && s.agent != nil {
+		repoURL, repoEnv := s.buildResticArgs(r.Context(), bk.Target)
+		if res, err := s.agent.Call(r.Context(), agentproto.CmdBackupExport, map[string]any{
+			"id": bk.ID, "repo_url": repoURL, "repo_env": repoEnv,
+		}); err == nil && res.OK {
+			if b64, _ := res.Data["archive_b64"].(string); b64 != "" {
+				if raw, decErr := base64.StdEncoding.DecodeString(b64); decErr == nil {
+					s.audit(r, ac.User, "backup.download", "backup", bk.ID, "success", map[string]any{"format": "tar.gz"})
+					w.Header().Set("Content-Type", "application/gzip")
+					w.Header().Set("Content-Disposition", "attachment; filename="+bk.ID+".tar.gz")
+					_, _ = w.Write(raw)
+					return
+				}
+			}
+		}
+	}
 	manifest, _ := json.MarshalIndent(bk, "", "  ")
-	s.audit(r, ac.User, "backup.download", "backup", bk.ID, "success", nil)
+	s.audit(r, ac.User, "backup.download", "backup", bk.ID, "success", map[string]any{"format": "manifest"})
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", "attachment; filename="+bk.ID+"-manifest.json")
 	_, _ = w.Write(manifest)

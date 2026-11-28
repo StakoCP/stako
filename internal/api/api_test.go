@@ -1803,3 +1803,56 @@ func TestFTPUpdateSSHKeysAndSSLDNS01Custom(t *testing.T) {
 		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestBackupRemoteConfigAndPrune(t *testing.T) {
+	_, st, h := setupTestServer(t)
+
+	rec := doReq(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "Admin-Strong-Password-123",
+	}, nil, "")
+	if rec.Code != 200 {
+		t.Fatalf("login = %d", rec.Code)
+	}
+	var loginResp struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &loginResp)
+	cookies := rec.Result().Cookies()
+	csrf := loginResp.CSRFToken
+
+	rec = doReq(t, h, "PUT", "/api/v1/backups/config", map[string]any{
+		"target":        "r2",
+		"endpoint":      "https://acct123.r2.cloudflarestorage.com",
+		"bucket":        "stako-backups",
+		"access_key":    "AKIAEXAMPLE",
+		"secret_key":    "super-secret-r2-key",
+		"keep_daily":    14,
+		"keep_weekly":   4,
+		"keep_monthly":  12,
+		"schedule_cron": "0 3 * * *",
+	}, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("put backup config = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, "GET", "/api/v1/backups/config", nil, cookies, "")
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"has_secret":true`)) || bytes.Contains(rec.Body.Bytes(), []byte("super-secret-r2-key")) {
+		t.Fatalf("get backup config = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, "POST", "/api/v1/backups", map[string]any{
+		"kind": "system_config", "target": "r2",
+	}, cookies, csrf)
+	if rec.Code != 201 {
+		t.Fatalf("create r2 backup = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, "POST", "/api/v1/backups/prune", nil, cookies, csrf)
+	if rec.Code != 200 {
+		t.Fatalf("prune backups = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if valid, _, _, err := st.VerifyAuditChain(context.Background()); err != nil || !valid {
+		t.Fatalf("audit chain broken: valid=%v err=%v", valid, err)
+	}
+}

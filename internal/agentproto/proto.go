@@ -60,6 +60,8 @@ const (
 	CmdMailRelayApply  = "mail.relay_apply"
 	CmdBackupRun       = "backup.run"
 	CmdBackupRestore   = "backup.restore"
+	CmdBackupPrune     = "backup.prune"
+	CmdBackupExport    = "backup.export"
 	CmdFileList        = "file.list"
 	CmdFileRead        = "file.read"
 	CmdFileWrite       = "file.write"
