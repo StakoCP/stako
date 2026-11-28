@@ -13,13 +13,29 @@
   let users = $state<User[]>([]);
   let loading = $state(true);
 
+  let searchQuery = $state('');
+  let protocolFilter = $state<'all' | FtpProtocol>('all');
+
   let canWrite = $derived(auth.user?.role !== 'readonly');
   let canSelectOwner = $derived(auth.user?.role === 'admin' || auth.user?.role === 'reseller');
+
+  let sftpTotal = $derived(accounts.filter((a) => a.protocol === 'sftp').length);
+  let ftpsTotal = $derived(accounts.filter((a) => a.protocol === 'ftps').length);
+
+  let filteredAccounts = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return accounts.filter((acc) => {
+      if (protocolFilter !== 'all' && acc.protocol !== protocolFilter) return false;
+      if (!q) return true;
+      return acc.username.toLowerCase().includes(q) || acc.home_dir.toLowerCase().includes(q);
+    });
+  });
 
   // Create modal
   let formOpen = $state(false);
   let fUsername = $state('');
   let fPassword = $state('');
+  let showCreatePassword = $state(false);
   let fProtocol = $state<FtpProtocol>('sftp');
   let fHomeDir = $state('');
   let fQuotaMb = $state('');
@@ -34,10 +50,15 @@
   // Edit modal
   let editTarget = $state<FtpAccount | null>(null);
   let ePassword = $state('');
+  let showEditPassword = $state(false);
   let eHomeDir = $state('');
   let eQuotaMb = $state('');
   let editError = $state('');
   let editSaving = $state(false);
+
+  // Connection info modal
+  let infoTarget = $state<FtpAccount | null>(null);
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 
   // SSH Keys
   let sshKeys = $state<SSHKey[]>([]);
@@ -48,6 +69,61 @@
   let sshFormError = $state('');
   let sshSaving = $state(false);
   let sshDeletingId = $state('');
+
+  function generateStrongPassword(length = 18): string {
+    const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lower = 'abcdefghijkmnopqrstuvwxyz';
+    const digits = '23456789';
+    const symbols = '!@#$%^&*_-+=';
+    const all = upper + lower + digits + symbols;
+    const pools = [upper, lower, digits, symbols];
+
+    const buf = new Uint32Array(length * 2);
+    crypto.getRandomValues(buf);
+
+    const chars: string[] = pools.map((pool, i) => pool[buf[i] % pool.length]);
+    for (let i = pools.length; i < length; i++) {
+      chars.push(all[buf[i] % all.length]);
+    }
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = buf[length + i] % (i + 1);
+      [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+    return chars.join('');
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(i18n.t.ftp.copySuccess);
+    } catch {
+      toast.error(i18n.t.common.errorGeneric);
+    }
+  }
+
+  function parseKeyType(pubKey: string): string {
+    const token = pubKey.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+    if (token.includes('ed25519')) return 'ED25519';
+    if (token.includes('rsa')) return 'RSA';
+    if (token.includes('ecdsa')) return 'ECDSA';
+    if (token.includes('dss') || token.includes('dsa')) return 'DSA';
+    return token ? token.toUpperCase() : 'SSH';
+  }
+
+  function connectionPort(protocol: FtpProtocol): string {
+    return protocol === 'sftp' ? '22' : '21';
+  }
+
+  function connectionCli(acc: FtpAccount): string {
+    if (acc.protocol === 'sftp') {
+      return `sftp ${acc.username}@${currentHost}`;
+    }
+    return `lftp -u ${acc.username} ftps://${currentHost}:21`;
+  }
+
+  function connectionUri(acc: FtpAccount): string {
+    return `${acc.protocol}://${acc.username}@${currentHost}:${connectionPort(acc.protocol)}`;
+  }
 
   function notifyJob(message: string, jobId?: string | null) {
     if (jobId) {
@@ -103,6 +179,7 @@
   function openEdit(acc: FtpAccount) {
     editTarget = acc;
     ePassword = '';
+    showEditPassword = false;
     eHomeDir = acc.home_dir;
     eQuotaMb = String(acc.quota_mb);
     editError = '';
@@ -184,6 +261,7 @@
   function openCreate() {
     fUsername = '';
     fPassword = '';
+    showCreatePassword = false;
     fProtocol = 'sftp';
     fHomeDir = '';
     fQuotaMb = '';
@@ -254,8 +332,50 @@
   {/if}
 </div>
 
+<div class="grid-cards">
+  <div class="card">
+    <div class="stat-label">{i18n.t.ftp.totalAccounts}</div>
+    <div class="stat-value">{accounts.length}</div>
+    <div class="stat-sub">
+      {sftpTotal} {i18n.t.ftp.sftpCount} · {ftpsTotal} {i18n.t.ftp.ftpsCount}
+    </div>
+  </div>
+  <div class="card">
+    <div class="stat-label">{i18n.t.ftp.protocol} / {i18n.t.ftp.port}</div>
+    <div class="stat-value">22 / 21</div>
+    <div class="stat-sub">SFTP :22 · FTPS :21</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">{i18n.t.ftp.sshKeysCount}</div>
+    <div class="stat-value">{sshKeys.length}</div>
+    <div class="stat-sub">{i18n.t.ftp.ssh_keys}</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">{i18n.t.ftp.securityMode}</div>
+    <div class="stat-value">TLS / SSH</div>
+    <div class="stat-sub">{i18n.t.ftp.chrootTlsOnly}</div>
+  </div>
+</div>
+
 <div class="toolbar">
-  <div></div>
+  <div class="toolbar-filters">
+    <input
+      type="search"
+      class="form-control"
+      placeholder={i18n.t.ftp.searchPlaceholder}
+      aria-label={i18n.t.ftp.searchPlaceholder}
+      bind:value={searchQuery}
+    />
+    <select
+      class="form-control"
+      aria-label={i18n.t.ftp.protocol}
+      bind:value={protocolFilter}
+    >
+      <option value="all">{i18n.t.ftp.allProtocols}</option>
+      <option value="sftp">SFTP</option>
+      <option value="ftps">FTPS</option>
+    </select>
+  </div>
   <button type="button" class="btn btn-sm" onclick={loadAccounts} disabled={loading}>
     {i18n.t.common.refresh}
   </button>
@@ -269,30 +389,39 @@
         <th>{i18n.t.ftp.protocol}</th>
         <th>{i18n.t.ftp.homeDir}</th>
         <th>{i18n.t.ftp.quotaMb}</th>
-        {#if canWrite}
-          <th>{i18n.t.common.actions}</th>
-        {/if}
+        <th>{i18n.t.ftp.createdAt}</th>
+        <th>{i18n.t.common.actions}</th>
       </tr>
     </thead>
     <tbody>
       {#if loading && accounts.length === 0}
-        <tr><td colspan={canWrite ? 5 : 4} class="empty-state">{i18n.t.common.loading}</td></tr>
-      {:else if accounts.length === 0}
-        <tr><td colspan={canWrite ? 5 : 4} class="empty-state">{i18n.t.common.noData}</td></tr>
+        <tr><td colspan="6" class="empty-state">{i18n.t.common.loading}</td></tr>
+      {:else if filteredAccounts.length === 0}
+        <tr><td colspan="6" class="empty-state">{i18n.t.common.noData}</td></tr>
       {:else}
-        {#each accounts as acc (acc.id)}
+        {#each filteredAccounts as acc (acc.id)}
           <tr>
             <td class="mono"><strong>{acc.username}</strong></td>
             <td>
               <span class="badge {acc.protocol === 'sftp' ? 'badge-success' : 'badge-primary'}">
-                {acc.protocol}
+                {acc.protocol.toUpperCase()}
               </span>
             </td>
             <td class="mono">{acc.home_dir}</td>
             <td>{acc.quota_mb === 0 ? i18n.t.common.unlimited : formatQuota(acc.quota_mb, 'MB')}</td>
-            {#if canWrite}
-              <td>
-                <div class="table-actions">
+            <td>{new Date(acc.created_at).toLocaleDateString()}</td>
+            <td>
+              <div class="table-actions">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-icon"
+                  title={i18n.t.ftp.connectionInfo}
+                  aria-label={i18n.t.ftp.connectionInfo}
+                  onclick={() => (infoTarget = acc)}
+                >
+                  <ActionIcon name="link" />
+                </button>
+                {#if canWrite}
                   <button
                     type="button"
                     class="btn btn-sm btn-icon"
@@ -311,9 +440,9 @@
                   >
                     <ActionIcon name="delete" />
                   </button>
-                </div>
-              </td>
-            {/if}
+                {/if}
+              </div>
+            </td>
           </tr>
         {/each}
       {/if}
@@ -361,14 +490,34 @@
 
     <div class="form-group">
       <label class="form-label" for="ftp-password">{i18n.t.ftp.password}</label>
-      <input
-        id="ftp-password"
-        type="password"
-        class="form-control"
-        bind:value={fPassword}
-        required
-        autocomplete="new-password"
-      />
+      <div class="input-group">
+        <input
+          id="ftp-password"
+          type={showCreatePassword ? 'text' : 'password'}
+          class="form-control"
+          bind:value={fPassword}
+          required
+          autocomplete="new-password"
+        />
+        <button
+          type="button"
+          class="btn btn-sm btn-icon"
+          title={i18n.t.ftp.generatePassword}
+          aria-label={i18n.t.ftp.generatePassword}
+          onclick={() => (fPassword = generateStrongPassword())}
+        >
+          <ActionIcon name="key" />
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-icon"
+          title={showCreatePassword ? i18n.t.ftp.hidePassword : i18n.t.ftp.showPassword}
+          aria-label={showCreatePassword ? i18n.t.ftp.hidePassword : i18n.t.ftp.showPassword}
+          onclick={() => (showCreatePassword = !showCreatePassword)}
+        >
+          <ActionIcon name="eye" />
+        </button>
+      </div>
     </div>
 
     <div class="form-row">
@@ -406,6 +555,82 @@
 </Modal>
 
 <Modal
+  open={infoTarget !== null}
+  title={i18n.t.ftp.connectionInfo}
+  onclose={() => (infoTarget = null)}
+>
+  {#if infoTarget}
+    <dl class="kv-list mb-3">
+      <dt>{i18n.t.ftp.host}</dt>
+      <dd class="mono">{currentHost}</dd>
+      <dt>{i18n.t.ftp.port}</dt>
+      <dd class="mono">{connectionPort(infoTarget.protocol)}</dd>
+      <dt>{i18n.t.ftp.protocol}</dt>
+      <dd>
+        <span class="badge {infoTarget.protocol === 'sftp' ? 'badge-success' : 'badge-primary'}">
+          {infoTarget.protocol.toUpperCase()}
+        </span>
+      </dd>
+      <dt>{i18n.t.ftp.username}</dt>
+      <dd class="mono">{infoTarget.username}</dd>
+      <dt>{i18n.t.ftp.homeDir}</dt>
+      <dd class="mono">{infoTarget.home_dir}</dd>
+    </dl>
+
+    <div class="form-group">
+      <label class="form-label" for="ftp-info-cli">{i18n.t.ftp.cliCommand}</label>
+      <div class="input-group">
+        <input
+          id="ftp-info-cli"
+          type="text"
+          class="form-control mono"
+          value={connectionCli(infoTarget)}
+          readonly
+        />
+        <button
+          type="button"
+          class="btn btn-sm btn-icon"
+          title={i18n.t.common.copy}
+          aria-label={i18n.t.common.copy}
+          onclick={() => copyText(connectionCli(infoTarget!))}
+        >
+          <ActionIcon name="copy" />
+        </button>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="ftp-info-uri">{i18n.t.ftp.quickUri}</label>
+      <div class="input-group">
+        <input
+          id="ftp-info-uri"
+          type="text"
+          class="form-control mono"
+          value={connectionUri(infoTarget)}
+          readonly
+        />
+        <button
+          type="button"
+          class="btn btn-sm btn-icon"
+          title={i18n.t.common.copy}
+          aria-label={i18n.t.common.copy}
+          onclick={() => copyText(connectionUri(infoTarget!))}
+        >
+          <ActionIcon name="copy" />
+        </button>
+      </div>
+    </div>
+
+    <div class="alert alert-info">{i18n.t.ftp.clientNote}</div>
+  {/if}
+  {#snippet footer()}
+    <button type="button" class="btn btn-primary" onclick={() => (infoTarget = null)}>
+      {i18n.t.common.close}
+    </button>
+  {/snippet}
+</Modal>
+
+<Modal
   open={deleteTarget !== null}
   title={i18n.t.ftp.deleteConfirmTitle}
   onclose={() => (deleteTarget = null)}
@@ -438,27 +663,36 @@
       <thead>
         <tr>
           <th>{i18n.t.ftp.ssh_label}</th>
+          <th>{i18n.t.ftp.keyType}</th>
           <th>Fingerprint</th>
           <th>{i18n.t.common.createdAt}</th>
-          {#if canWrite}
-            <th>{i18n.t.common.actions}</th>
-          {/if}
+          <th>{i18n.t.common.actions}</th>
         </tr>
       </thead>
       <tbody>
         {#if sshLoading && sshKeys.length === 0}
-          <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.common.loading}</td></tr>
+          <tr><td colspan="5" class="empty-state">{i18n.t.common.loading}</td></tr>
         {:else if sshKeys.length === 0}
-          <tr><td colspan={canWrite ? 4 : 3} class="empty-state">{i18n.t.ftp.ssh_empty}</td></tr>
+          <tr><td colspan="5" class="empty-state">{i18n.t.ftp.ssh_empty}</td></tr>
         {:else}
           {#each sshKeys as k (k.id)}
             <tr>
               <td><strong>{k.label}</strong></td>
+              <td><span class="badge badge-primary">{parseKeyType(k.public_key)}</span></td>
               <td class="mono">{k.fingerprint}</td>
               <td>{new Date(k.created_at).toLocaleDateString()}</td>
-              {#if canWrite}
-                <td>
-                  <div class="table-actions">
+              <td>
+                <div class="table-actions">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-icon"
+                    title={i18n.t.common.copy}
+                    aria-label={i18n.t.common.copy}
+                    onclick={() => copyText(k.fingerprint)}
+                  >
+                    <ActionIcon name="copy" />
+                  </button>
+                  {#if canWrite}
                     <button
                       type="button"
                       class="btn btn-sm btn-icon btn-danger"
@@ -469,9 +703,9 @@
                     >
                       <ActionIcon name="delete" />
                     </button>
-                  </div>
-                </td>
-              {/if}
+                  {/if}
+                </div>
+              </td>
             </tr>
           {/each}
         {/if}
@@ -500,13 +734,33 @@
 
       <div class="form-group">
         <label class="form-label" for="ftp-edit-password">{i18n.t.ftp.new_password}</label>
-        <input
-          id="ftp-edit-password"
-          type="password"
-          class="form-control"
-          bind:value={ePassword}
-          autocomplete="new-password"
-        />
+        <div class="input-group">
+          <input
+            id="ftp-edit-password"
+            type={showEditPassword ? 'text' : 'password'}
+            class="form-control"
+            bind:value={ePassword}
+            autocomplete="new-password"
+          />
+          <button
+            type="button"
+            class="btn btn-sm btn-icon"
+            title={i18n.t.ftp.generatePassword}
+            aria-label={i18n.t.ftp.generatePassword}
+            onclick={() => (ePassword = generateStrongPassword())}
+          >
+            <ActionIcon name="key" />
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-icon"
+            title={showEditPassword ? i18n.t.ftp.hidePassword : i18n.t.ftp.showPassword}
+            aria-label={showEditPassword ? i18n.t.ftp.hidePassword : i18n.t.ftp.showPassword}
+            onclick={() => (showEditPassword = !showEditPassword)}
+          >
+            <ActionIcon name="eye" />
+          </button>
+        </div>
       </div>
 
       <div class="form-row">
