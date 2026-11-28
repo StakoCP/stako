@@ -372,7 +372,7 @@ func (s *Store) UpsertSecurityFinding(ctx context.Context, f *SecurityFinding) e
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO security_findings (id, category, severity, title, description, remediation, status, component, detected_at, updated_at)
 		 VALUES (?,?,?,?,?,?,?,?,?,?)
-		 ON CONFLICT(id) DO UPDATE SET severity=excluded.severity, title=excluded.title, description=excluded.description, remediation=excluded.remediation, updated_at=excluded.updated_at`,
+		 ON CONFLICT(id) DO UPDATE SET severity=excluded.severity, title=excluded.title, description=excluded.description, remediation=excluded.remediation, status=CASE WHEN security_findings.status='accepted' THEN 'accepted' ELSE excluded.status END, updated_at=excluded.updated_at`,
 		f.ID, f.Category, f.Severity, f.Title, f.Description, f.Remediation, f.Status, f.Component, formatTime(f.DetectedAt), formatTime(f.UpdatedAt),
 	)
 	return err

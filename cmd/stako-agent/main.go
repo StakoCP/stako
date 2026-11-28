@@ -2897,27 +2897,49 @@ func applyPostfixRelays(resp agentproto.Response, logger *slog.Logger, args map[
 func runSecurityScan() []map[string]any {
 	findings := []map[string]any{}
 
-	// 1. SSH PermitRootLogin & PasswordAuthentication
+	// 1. SSH PermitRootLogin & PasswordAuthentication (prefer effective `sshd -T`)
 	sshRootStatus := "resolved"
 	sshPassStatus := "open"
-	sshFiles, _ := filepath.Glob("/etc/ssh/sshd_config.d/*.conf")
-	sshFiles = append([]string{"/etc/ssh/sshd_config"}, sshFiles...)
-	for _, f := range sshFiles {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			continue
+	if out, err := exec.Command("sshd", "-T").Output(); err == nil && len(out) > 0 {
+		for _, line := range strings.Split(string(out), "\n") {
+			low := strings.ToLower(strings.TrimSpace(line))
+			if strings.HasPrefix(low, "permitrootlogin ") {
+				val := strings.TrimSpace(strings.TrimPrefix(low, "permitrootlogin "))
+				if val == "yes" {
+					sshRootStatus = "open"
+				} else {
+					sshRootStatus = "resolved"
+				}
+			}
+			if strings.HasPrefix(low, "passwordauthentication ") {
+				val := strings.TrimSpace(strings.TrimPrefix(low, "passwordauthentication "))
+				if val == "no" {
+					sshPassStatus = "resolved"
+				} else {
+					sshPassStatus = "open"
+				}
+			}
 		}
-		for _, line := range strings.Split(string(b), "\n") {
-			t := strings.TrimSpace(line)
-			if t == "" || strings.HasPrefix(t, "#") {
+	} else {
+		sshFiles, _ := filepath.Glob("/etc/ssh/sshd_config.d/*.conf")
+		sshFiles = append([]string{"/etc/ssh/sshd_config"}, sshFiles...)
+		for _, f := range sshFiles {
+			b, err := os.ReadFile(f)
+			if err != nil {
 				continue
 			}
-			low := strings.ToLower(t)
-			if strings.HasPrefix(low, "permitrootlogin") && strings.Contains(low, "yes") {
-				sshRootStatus = "open"
-			}
-			if strings.HasPrefix(low, "passwordauthentication") && strings.Contains(low, "no") {
-				sshPassStatus = "resolved"
+			for _, line := range strings.Split(string(b), "\n") {
+				t := strings.TrimSpace(line)
+				if t == "" || strings.HasPrefix(t, "#") {
+					continue
+				}
+				low := strings.ToLower(t)
+				if strings.HasPrefix(low, "permitrootlogin") && strings.Contains(low, "yes") {
+					sshRootStatus = "open"
+				}
+				if strings.HasPrefix(low, "passwordauthentication") && strings.Contains(low, "no") {
+					sshPassStatus = "resolved"
+				}
 			}
 		}
 	}
@@ -2944,9 +2966,13 @@ func runSecurityScan() []map[string]any {
 		},
 	)
 
-	// 2. Firewall (nftables) & Fail2Ban
+	// 2. Firewall (nftables / ufw) & Fail2Ban
 	fwStatus := "open"
 	if out, err := exec.Command("systemctl", "is-active", "nftables").Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+		fwStatus = "resolved"
+	} else if out, err := exec.Command("systemctl", "is-active", "ufw").Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+		fwStatus = "resolved"
+	} else if out, err := exec.Command("nft", "list", "tables").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
 		fwStatus = "resolved"
 	}
 	findings = append(findings, map[string]any{
@@ -2954,7 +2980,7 @@ func runSecurityScan() []map[string]any {
 		"category":    "firewall",
 		"severity":    "high",
 		"title":       "Host firewall (nftables) must be active",
-		"description": "Verifies that nftables systemd service is running.",
+		"description": "Verifies that nftables/ufw service or kernel nftables ruleset is active.",
 		"remediation": "Run: systemctl enable --now nftables",
 		"component":   "nftables",
 		"status":      fwStatus,
@@ -2962,6 +2988,8 @@ func runSecurityScan() []map[string]any {
 
 	f2bStatus := "open"
 	if out, err := exec.Command("systemctl", "is-active", "fail2ban").Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+		f2bStatus = "resolved"
+	} else if out, err := exec.Command("fail2ban-client", "ping").Output(); err == nil && strings.Contains(strings.ToLower(string(out)), "pong") {
 		f2bStatus = "resolved"
 	}
 	findings = append(findings, map[string]any{
