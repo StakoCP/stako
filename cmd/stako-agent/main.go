@@ -3088,6 +3088,73 @@ func tailLogLines(path string, maxLines int) []string {
 	return lines
 }
 
+func extractLogTimestamp(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return ""
+	}
+	// 1. ISO / RFC3339 / journalctl short-iso / docker --timestamps / slog JSON or text
+	fields := strings.Fields(trimmed)
+	if len(fields) >= 1 {
+		f0 := fields[0]
+		for _, layout := range []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02T15:04:05-0700",
+			"2006-01-02T15:04:05.000000-0700",
+		} {
+			if t, err := time.Parse(layout, f0); err == nil {
+				return t.Format(time.RFC3339)
+			}
+		}
+	}
+	// 2. Two-token date + time: "2026-11-28 07:15:02", "2026/11/28 07:15:02" (nginx error.log), "2026-11-28 07:15:02,123" (fail2ban)
+	if len(fields) >= 2 {
+		dt := strings.Split(fields[0]+" "+fields[1], ",")[0]
+		for _, layout := range []string{
+			"2006-01-02 15:04:05",
+			"2006/01/02 15:04:05",
+		} {
+			if t, err := time.ParseInLocation(layout, dt, time.Local); err == nil {
+				return t.Format(time.RFC3339)
+			}
+		}
+	}
+	// 3. Traditional syslog: "Nov 28 07:15:02 ..."
+	if len(trimmed) >= 15 {
+		if t, err := time.ParseInLocation(time.Stamp, trimmed[:15], time.Local); err == nil {
+			t = t.AddDate(time.Now().Year(), 0, 0)
+			return t.Format(time.RFC3339)
+		}
+	}
+	// 4. Nginx / Apache access log: [... 28/Nov/2026:07:15:02 +0700 ...]
+	if idx := strings.Index(trimmed, "["); idx >= 0 {
+		if end := strings.Index(trimmed[idx+1:], "]"); end > 0 {
+			inside := trimmed[idx+1 : idx+1+end]
+			for _, layout := range []string{
+				"02/Jan/2006:15:04:05 -0700",
+				"Mon Jan 02 15:04:05.000000 2006",
+				"Mon Jan 02 15:04:05 2006",
+			} {
+				if t, err := time.Parse(layout, inside); err == nil {
+					return t.Format(time.RFC3339)
+				}
+			}
+		}
+	}
+	// 5. slog text format: time=2026-11-28T07:15:02...
+	if idx := strings.Index(trimmed, "time="); idx >= 0 {
+		rest := trimmed[idx+5:]
+		if sp := strings.IndexAny(rest, " \t"); sp > 0 {
+			rest = rest[:sp]
+		}
+		if t, err := time.Parse(time.RFC3339Nano, rest); err == nil {
+			return t.Format(time.RFC3339)
+		}
+	}
+	return ""
+}
+
 func queryCentralLogs(resp agentproto.Response, dryRun bool, logger *slog.Logger, args map[string]any) agentproto.Response {
 	service, _ := args["service"].(string)
 	if service == "" {
@@ -3106,6 +3173,9 @@ func queryCentralLogs(resp agentproto.Response, dryRun bool, logger *slog.Logger
 	sourceSet := map[string]bool{}
 	addEntry := func(svc, src, ts, msg string) {
 		sourceSet[src] = true
+		if ts == "" {
+			ts = extractLogTimestamp(msg)
+		}
 		lvl := inferLogLevel(msg)
 		if service != "all" && svc != service {
 			return
