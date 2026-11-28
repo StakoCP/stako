@@ -787,6 +787,12 @@ func (s *Server) handleRunSecurityScan(w http.ResponseWriter, r *http.Request) {
 			Title: "Panel running without TLS", Description: "stako-core is running with --insecure-http.",
 			Remediation: "Run stako-core with TLS enabled (SEC-A15).", Status: "open", Component: "stako-core",
 		})
+	} else {
+		_ = s.store.UpsertSecurityFinding(r.Context(), &store.SecurityFinding{
+			ID: "sf_panel_tls", Category: "tls", Severity: "high",
+			Title: "Panel TLS enabled", Description: "stako-core is serving HTTPS with TLS.",
+			Remediation: "None", Status: "resolved", Component: "stako-core",
+		})
 	}
 
 	if resp, err := s.agent.Call(r.Context(), agentproto.CmdSecurityScan, nil); err == nil && resp.OK {
