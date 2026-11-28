@@ -1306,7 +1306,7 @@ const dict = {
       noPreviews: 'Belum ada preview environment.',
     },
     nodes: {
-      title: 'Multi-Server & Impor Panel',
+      title: 'Multi-Server',
       subtitle: 'Kelola node server jarak jauh dan impor cadangan dari panel lain',
       sectionNodes: 'Node Server',
       addNode: 'Tambah Node',
@@ -2861,7 +2861,7 @@ const dict = {
       noPreviews: 'No preview environments yet.',
     },
     nodes: {
-      title: 'Multi-Server & Panel Import',
+      title: 'Multi-Server',
       subtitle: 'Manage remote server nodes and import backups from other hosting panels',
       sectionNodes: 'Server Nodes',
       addNode: 'Add Node',
