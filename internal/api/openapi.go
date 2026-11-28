@@ -469,15 +469,25 @@ func (s *Server) handleOpenAPIDocs(w http.ResponseWriter, r *http.Request) {
 			if tags, ok := mMap["tags"].([]string); ok && len(tags) > 0 {
 				tag = tags[0]
 			}
+			upperM := strings.ToUpper(m)
 			var details strings.Builder
+			var reqJSON string
 			if rb, ok := mMap["requestBody"].(map[string]any); ok {
 				if ct, ok := rb["content"].(map[string]any); ok {
 					if aj, ok := ct["application/json"].(map[string]any); ok && aj["example"] != nil {
 						if b, err := json.MarshalIndent(aj["example"], "", "  "); err == nil {
-							details.WriteString("<div><strong>Request:</strong><pre>" + html.EscapeString(string(b)) + "</pre></div>")
+							reqJSON = string(b)
 						}
 					}
 				}
+			}
+			curlCmd := fmt.Sprintf("curl -sS -X %s \\\n  \"https://YOUR_PANEL_HOST:8083/api/v1%s\" \\\n  -H \"Authorization: Bearer $STAKO_TOKEN\"", upperM, p)
+			if reqJSON != "" {
+				curlCmd += " \\\n  -H \"Content-Type: application/json\" \\\n  -d '" + reqJSON + "'"
+			}
+			details.WriteString("<div><strong>cURL:</strong><pre>" + html.EscapeString(curlCmd) + "</pre></div>")
+			if reqJSON != "" {
+				details.WriteString("<div><strong>Request Body:</strong><pre>" + html.EscapeString(reqJSON) + "</pre></div>")
 			}
 			if rs, ok := mMap["responses"].(map[string]any); ok {
 				for code, rv := range rs {
@@ -495,13 +505,10 @@ func (s *Server) handleOpenAPIDocs(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			exCell := ""
-			if details.Len() > 0 {
-				exCell = "<details><summary>Request / Response</summary>" + details.String() + "</details>"
-			}
+			exCell := "<details><summary>cURL / Request / Response</summary>" + details.String() + "</details>"
 			rows.WriteString(fmt.Sprintf(
 				"<tr><td><code>%s</code></td><td><code>/api/v1%s</code></td><td>%s</td><td>%s%s</td></tr>\n",
-				html.EscapeString(strings.ToUpper(m)),
+				html.EscapeString(upperM),
 				html.EscapeString(p),
 				html.EscapeString(tag),
 				html.EscapeString(sum),
@@ -514,11 +521,32 @@ func (s *Server) handleOpenAPIDocs(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Stako API Reference</title>
-<style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#0f172a}table{width:100%%;border-collapse:collapse}th,td{border-bottom:1px solid #e2e8f0;padding:.55rem;text-align:left;font-size:.9rem;vertical-align:top}code{background:#f1f5f9;padding:.15rem .35rem;border-radius:4px}pre{background:#f8fafc;border:1px solid #e2e8f0;padding:.6rem;border-radius:6px;overflow:auto;font-size:.8rem}details{margin-top:.35rem}</style>
+<style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#0f172a;line-height:1.5}table{width:100%%;border-collapse:collapse}th,td{border-bottom:1px solid #e2e8f0;padding:.55rem;text-align:left;font-size:.9rem;vertical-align:top}code{background:#f1f5f9;padding:.15rem .35rem;border-radius:4px}pre{background:#f8fafc;border:1px solid #e2e8f0;padding:.6rem;border-radius:6px;overflow:auto;font-size:.8rem}details{margin-top:.35rem}.guide{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:1rem 1.25rem;margin:1rem 0 1.5rem}.guide h2{margin:0 0 .5rem;font-size:1.05rem}.guide h3{margin:.85rem 0 .35rem;font-size:.92rem}</style>
 </head>
 <body>
 <h1>Stako Control Panel API (%s)</h1>
 <p>OpenAPI 3.1: <a href="/api/v1/openapi.json">openapi.json</a> | <a href="/api/v1/openapi.yaml">openapi.yaml</a></p>
+<section class="guide">
+  <h2>Cara Request API (Quick Start)</h2>
+  <p>Base URL: <code>https://YOUR_PANEL_HOST:8083/api/v1</code></p>
+  <h3>1. Autentikasi dengan API Token (Direkomendasikan)</h3>
+  <p>Buat token di dashboard <strong>Account &rarr; API Tokens</strong>, lalu kirim melalui header <code>Authorization: Bearer &lt;TOKEN&gt;</code>:</p>
+  <pre>export STAKO_TOKEN="stk_xxxxxxxxxxxxxxxx"
+
+# Contoh GET (List Domains)
+curl -sS "https://YOUR_PANEL_HOST:8083/api/v1/domains" \
+  -H "Authorization: Bearer $STAKO_TOKEN"
+
+# Contoh POST (Create Domain)
+curl -sS -X POST "https://YOUR_PANEL_HOST:8083/api/v1/domains" \
+  -H "Authorization: Bearer $STAKO_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"example.com","php_version":"8.4","web_server":"nginx"}'</pre>
+  <h3>2. Autentikasi Session Cookie + CSRF</h3>
+  <p>Untuk login berbasis cookie, simpan cookie dari <code>POST /api/v1/auth/login</code> dan sertakan header <code>X-CSRF-Token</code> pada setiap request <code>POST</code>/<code>PUT</code>/<code>PATCH</code>/<code>DELETE</code>.</p>
+  <h3>3. Format Error</h3>
+  <p>Semua error mengembalikan JSON standar <strong>RFC 7807</strong> (<code>application/problem+json</code>) dengan field <code>type</code>, <code>title</code>, <code>status</code>, dan <code>detail</code>.</p>
+</section>
 <table><thead><tr><th>Method</th><th>Endpoint</th><th>Tag</th><th>Summary &amp; Examples</th></tr></thead><tbody>%s</tbody></table>
 </body></html>`, html.EscapeString(version.Version), rows.String())
 }
